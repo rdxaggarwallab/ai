@@ -64,4 +64,4 @@ psql -U postgres -f init.sql
 - [ ] Add assignment upload
 
 ## Contributing
-Push to `develop` branch for new features.
+Work happens on feature branches merged into `main`. See `docs/PLAN.md` for the roadmap and `notes/chat-log.md` for decisions.

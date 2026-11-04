@@ -26,20 +26,20 @@ pip install -r requirements.txt
 flask run
 ```
 
-## Features Implemented
+## Features Planned (MVP; not built yet, see docs/PLAN.md)
 
-### ✅ Authentication
+### ⬜ Authentication
 - **Login Page:** Email and password login
 - **Register Page:** Sign up as student or teacher
 - **JWT Token Storage:** Automatic token management
 
-### ✅ Dashboard
+### ⬜ Dashboard
 - **Course Listing:** View all available courses
 - **Course Enrollment:** Students can enroll in courses
 - **User Profile:** Display user name and role
 - **Logout:** Secure logout functionality
 
-### ✅ Styling
+### ⬜ Styling
 - Modern gradient design
 - Responsive grid layout
 - Smooth transitions and hover effects
