@@ -1,76 +1,63 @@
-# LMS Frontend Setup Guide
+# Setup Guide (Windows)
 
-## Quick Start
+Your project folder is `D:\aair\.web\LMS`. Pick **one** of the two options below.
 
-### 1. Install Dependencies
-```bash
-cd frontend
-npm install
+## Option 1: Docker (easiest)
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/), then:
+```powershell
+cd D:\aair\.web\LMS
+docker compose up --build
+```
+Open http://localhost:3000. Press `Ctrl+C` to stop.
+Your data is kept between runs. To erase everything: `docker compose down -v`.
+
+## Option 2: Without Docker
+You need **Python 3.11+**, **Node 20+** and **PostgreSQL 16**.
+
+**1. Database** (once). In SQL Shell (psql) as the `postgres` user:
+```sql
+CREATE USER lms WITH PASSWORD 'lms';
+CREATE DATABASE lms OWNER lms;
 ```
 
-### 2. Start the Development Server
-```bash
-npm start
-```
-
-The app will open at `http://localhost:3000`
-
-### 3. Make Sure Backend is Running
-The frontend expects the backend API at `http://localhost:5000/api`
-
-```bash
-cd backend
+**2. Backend.** In terminal 1:
+```powershell
+cd D:\aair\.web\LMS\backend
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+venv\Scripts\activate
 pip install -r requirements.txt
-flask run
+$env:FLASK_APP = "wsgi.py"
+flask db upgrade          # creates the tables
+flask run                 # API on http://localhost:5000
 ```
 
-## Features Planned (MVP; not built yet, see docs/PLAN.md)
+**3. Frontend.** In terminal 2:
+```powershell
+cd D:\aair\.web\LMS\frontend
+npm install
+npm run dev               # app on http://localhost:3000
+```
 
-### ⬜ Authentication
-- **Login Page:** Email and password login
-- **Register Page:** Sign up as student or teacher
-- **JWT Token Storage:** Automatic token management
+**4. Run the tests** (backend terminal): `python -m pytest -q`
 
-### ⬜ Dashboard
-- **Course Listing:** View all available courses
-- **Course Enrollment:** Students can enroll in courses
-- **User Profile:** Display user name and role
-- **Logout:** Secure logout functionality
+## Try it
+1. Register as a **Teacher**. Create a course, open it, and add an assignment.
+2. In a private or incognito window, register as a **Student**. Enroll, open the course and upload a `.py` file.
+3. Back as the teacher, refresh the page and enter a grade and feedback.
+4. As the student, open **My grades**.
 
-### ⬜ Styling
-- Modern gradient design
-- Responsive grid layout
-- Smooth transitions and hover effects
+## What works (MVP)
+- ✅ Register and login (student or teacher), with the token in an httpOnly cookie and CSRF protection
+- ✅ Courses: create (teacher), list, enroll (student)
+- ✅ Assignments: create with due date and points
+- ✅ File submission (.py .ipynb .pdf .zip .txt .md .png .jpg, max 20 MB)
+- ✅ Grading with feedback, and a student grades page
+- ✅ Permission checks on the server: students see only their own work, teachers only their own courses
 
-## Pages
-
-1. **Login** (`/login`) - User authentication
-2. **Register** (`/register`) - New user registration
-3. **Dashboard** (`/dashboard`) - Main app with courses
-
-## API Integration
-
-All API calls are handled through `src/api.js`:
-- Auto-adds JWT token to requests
-- Error handling
-- Modular endpoints for auth, courses, assignments, grades
-
-## Next Steps to Build (Step 3)
-
-- [ ] Course Details page
-- [ ] Assignments page
-- [ ] Assignment submission form
-- [ ] Grades/Marks view
-- [ ] Teacher dashboard for creating courses/assignments
-- [ ] File upload for assignments
-
-## Testing
-
-**Test Account:**
-1. First, create a test account via Register
-2. Use those credentials to login
-3. Create a course (if teacher role)
-4. Enroll in courses (if student role)
-
+## Settings (environment variables)
+| Variable | Default | Notes |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://lms:lms@localhost:5432/lms` | |
+| `JWT_SECRET_KEY` | dev key | **Must be changed** before real use (a long random string) |
+| `COOKIE_SECURE` | `false` | Set to `true` when served over HTTPS |
+| `UPLOAD_DIR` | `backend/uploads` | |

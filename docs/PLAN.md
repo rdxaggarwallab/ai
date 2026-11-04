@@ -21,12 +21,12 @@ You (review, testing, deployment, decisions) and Claude (code, tests, docs).
 
 ## Roadmap
 ### MVP (3–4 weeks)
-- [ ] Docker Compose: database, API and web app
-- [ ] Register and login with roles: admin, teacher, TA, student
-- [ ] Courses: create (teacher), list, view details
-- [ ] Enrollment (student)
-- [ ] Assignments: create (teacher), upload a file to submit (student)
-- [ ] Manual grading with feedback, and a grades page
+- [x] Docker Compose: database, API and web app (written, not yet tested on your PC)
+- [x] Register and login with roles: admin, teacher, TA, student (only students and teachers can sign up themselves; an admin screen is still to do)
+- [x] Courses: create (teacher), list, view details
+- [x] Enrollment (student)
+- [x] Assignments: create (teacher), upload a file to submit (student)
+- [x] Manual grading with feedback, and a grades page
 - [ ] Deploy and pilot with a few users
 
 ### Phase 2: Coding (3–4 weeks)

@@ -51,3 +51,6 @@ dist/
 *.db
 *.sqlite
 db.sqlite3
+
+# App data
+uploads/

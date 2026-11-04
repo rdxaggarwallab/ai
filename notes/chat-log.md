@@ -50,6 +50,24 @@ git checkout claude/bot-performance-optimization-mj3rme
 Notes live in `notes/` (this file) and `docs/PLAN.md`, so they reach your D: folder on every pull.
 Code is built in the cloud and pushed to GitHub.
 
+**GitHub push failed:** Claude has no GitHub access to `rdxaggarwallab/ai` (403 error).
+**Q: "Leave it, we will do it here."** We're building in this cloud session for now.
+Claude sends files and a zip of the project to you directly. Save them into `D:\aair\.web\LMS`.
+
+**MVP built (same session):**
+- Backend `backend/`: Flask with SQLAlchemy and migrations, argon2 passwords, JWT in an httpOnly cookie
+  with CSRF protection, and permission checks on every route. Uploads have a type whitelist and a 20 MB limit
+  and are stored under random names.
+- Frontend `frontend/`: React with Vite. Login, register, courses, enroll, assignments, upload, grading, My grades.
+- `docker-compose.yml` with db, api and web.
+- Verified: 5 backend tests pass, the migration was applied to a real PostgreSQL 16, and a browser test
+  passed (teacher creates course and assignment, student enrolls and submits, teacher grades, student sees 92/100).
+- Not verified: `docker compose up` (Docker Hub blocked downloads in the cloud machine). Try it on your PC.
+- Fix along the way: SQLAlchemy 2.1 needs the `psycopg` (v3) driver, not `psycopg2`.
+
+**Next session:** you run it on your PC (see `frontend/SETUP.md`) and report anything broken.
+Then: an admin screen to manage users and roles, and the start of Phase 2 (in-browser Python and the autograder).
+
 ### Decisions so far
 | # | Decision |
 |---|---|
