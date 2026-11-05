@@ -12,7 +12,6 @@ teachers should still look at the code (see docs/PLAN.md, Phase 3 similarity che
 import io
 import os
 import re
-import resource
 import secrets
 import shutil
 import subprocess
@@ -131,7 +130,9 @@ class LocalUnsafeRunner:
                     f.write(text)
             junit = os.path.join(work, "junit.xml")
 
-            def limits():
+            def limits():  # Unix only; Windows has no rlimits (only the timeout applies)
+                import resource
+
                 resource.setrlimit(resource.RLIMIT_CPU, (self.timeout, self.timeout))
                 resource.setrlimit(resource.RLIMIT_AS, (1024 * 2**20, 1024 * 2**20))
 
@@ -139,8 +140,10 @@ class LocalUnsafeRunner:
                 p = subprocess.run(
                     [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                      f"--junitxml={junit}", "test_solution.py"],
-                    cwd=work, capture_output=True, timeout=self.timeout, preexec_fn=limits,
-                    env={"PATH": os.environ.get("PATH", ""), "HOME": work},
+                    cwd=work, capture_output=True, timeout=self.timeout,
+                    preexec_fn=None if os.name == "nt" else limits,
+                    env={**({"SYSTEMROOT": os.environ.get("SYSTEMROOT", "")} if os.name == "nt" else {}),
+                         "PATH": os.environ.get("PATH", ""), "HOME": work},
                 )
                 log = (p.stdout + p.stderr).decode(errors="replace")
             except subprocess.TimeoutExpired:

@@ -40,6 +40,23 @@ jobs:
       - name: Models and migrations are in sync
         run: flask db check
 
+  # The user develops on Windows: make sure the backend imports and its tests pass there too.
+  backend-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Unit tests (Docker sandbox tests skip on Windows runners)
+        run: python -m pytest -q -rs
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
