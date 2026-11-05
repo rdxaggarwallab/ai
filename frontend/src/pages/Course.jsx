@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../main";
 
 export default function CoursePage() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [course, setCourse] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [error, setError] = useState("");
@@ -21,11 +23,15 @@ export default function CoursePage() {
   if (!course) return <p>Loading…</p>;
   if (!course.can_view) return <p className="muted">Enroll in this course to see it.</p>;
 
+  // Only the course's own teacher or an admin assigns TAs.
+  const ownsCourse = user.role === "admin" || course.teacher_id === user.id;
+
   return (
     <>
       <span className="tag">{course.code}</span>
       <h1>{course.title}</h1>
       <p className="muted">{course.description}</p>
+      {ownsCourse && <Staff courseId={id} />}
       {course.can_manage && <NewAssignment courseId={id} onCreated={load} />}
       <h2>Assignments</h2>
       {assignments.length === 0 && <p className="muted">No assignments yet.</p>}
@@ -36,16 +42,58 @@ export default function CoursePage() {
   );
 }
 
+function Staff({ courseId }) {
+  const [staff, setStaff] = useState([]);
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+  const load = () => api.staff(courseId).then(setStaff).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, [courseId]);
+
+  const add = async (e) => {
+    e.preventDefault();
+    setError("");
+    try { await api.addStaff(courseId, email); setEmail(""); load(); }
+    catch (err) { setError(err.message); }
+  };
+  const remove = async (u) => {
+    setError("");
+    try { await api.removeStaff(courseId, u.id); load(); } catch (err) { setError(err.message); }
+  };
+
+  return (
+    <div className="card">
+      <h3>Teaching assistants</h3>
+      <div className="staff">
+        {staff.length === 0 && <span className="muted small">No TAs yet.</span>}
+        {staff.map((u) => (
+          <span className="chip" key={u.id}>{u.name}
+            <button title={`Remove ${u.name}`} aria-label={`Remove ${u.name}`} onClick={() => remove(u)}>✕</button>
+          </span>
+        ))}
+      </div>
+      <form className="row" onSubmit={add} style={{ marginTop: 12 }}>
+        <input type="email" placeholder="TA's email" required value={email}
+          onChange={(e) => setEmail(e.target.value)} />
+        <button>Add TA</button>
+        {error && <span className="error">{error}</span>}
+      </form>
+    </div>
+  );
+}
+
 function NewAssignment({ courseId, onCreated }) {
-  const empty = { title: "", description: "", due_at: "", max_points: 100 };
+  const empty = { title: "", description: "", due_at: "", max_points: 100,
+    allow_late: true, late_penalty_percent: 0 };
   const [form, setForm] = useState(empty);
   const [error, setError] = useState("");
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     try {
-      await api.createAssignment(courseId, { ...form, due_at: form.due_at || null });
+      // datetime-local is the teacher's local time; send it as UTC so the deadline is exact.
+      const due_at = form.due_at ? new Date(form.due_at).toISOString() : null;
+      await api.createAssignment(courseId, { ...form, due_at });
       setForm(empty);
       onCreated();
     } catch (err) { setError(err.message); }
@@ -57,10 +105,22 @@ function NewAssignment({ courseId, onCreated }) {
       <label className="small">Due <input type="datetime-local" value={form.due_at} onChange={set("due_at")} /></label>
       <label className="small">Points <input type="number" min="1" value={form.max_points}
         onChange={set("max_points")} style={{ width: 80 }} /></label>
+      <label className="small"><input type="checkbox" checked={form.allow_late} onChange={set("allow_late")} /> Accept late work</label>
+      {form.allow_late && (
+        <label className="small">Late penalty % <input type="number" min="0" max="100"
+          value={form.late_penalty_percent} onChange={set("late_penalty_percent")} style={{ width: 70 }} /></label>
+      )}
       <button>Add assignment</button>
       {error && <p className="error">{error}</p>}
     </form>
   );
+}
+
+function scoreText(s, max) {
+  if (!s.grade) return null;
+  const g = s.grade;
+  const base = `${g.final_points}/${max}`;
+  return g.penalty_percent ? `${base} (${g.points} − ${g.penalty_percent}% late)` : base;
 }
 
 function Assignment({ a, manage }) {
@@ -70,12 +130,15 @@ function Assignment({ a, manage }) {
   const load = () => api.submissions(a.id).then(setSubs).catch((e) => setMsg(e.message));
   useEffect(() => { load(); }, [a.id]);
 
+  const pastDue = a.due_at && new Date(a.due_at) < new Date();
+  const closed = pastDue && !a.allow_late;
+
   const upload = async (e) => {
     e.preventDefault();
     if (!file) return;
     try {
-      await api.submit(a.id, file);
-      setMsg("Submitted ✓");
+      const s = await api.submit(a.id, file);
+      setMsg(s.late ? "Submitted, but late" : "Submitted ✓");
       setFile(null);
       e.target.reset();
       load();
@@ -85,16 +148,19 @@ function Assignment({ a, manage }) {
   return (
     <div className="card">
       <h3>{a.title} <span className="muted small">· {a.max_points} pts
-        {a.due_at && ` · due ${new Date(a.due_at).toLocaleString()}`}</span></h3>
+        {a.due_at && ` · due ${new Date(a.due_at).toLocaleString()}`}
+        {a.due_at && (a.allow_late
+          ? a.late_penalty_percent > 0 && ` · late: −${a.late_penalty_percent}%`
+          : " · no late work")}</span></h3>
       <p>{a.description}</p>
 
-      {!manage && (
+      {!manage && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
         <form className="row" onSubmit={upload}>
           <input type="file" accept=".py,.ipynb,.pdf,.zip,.txt,.md,.png,.jpg"
             onChange={(e) => setFile(e.target.files[0])} />
-          <button disabled={!file}>Submit</button>
+          <button disabled={!file}>{pastDue ? "Submit late" : "Submit"}</button>
         </form>
-      )}
+      ))}
       {msg && <p className="muted">{msg}</p>}
 
       {subs.length > 0 && (
@@ -107,9 +173,10 @@ function Assignment({ a, manage }) {
               <tr key={s.id}>
                 {manage && <td>{s.student}</td>}
                 <td><a href={api.fileUrl(s.id)}>{s.original_name}</a></td>
-                <td className="small">{new Date(s.submitted_at).toLocaleString()}</td>
+                <td className="small">{new Date(s.submitted_at).toLocaleString()}
+                  {s.late && <span className="badge-late">late</span>}</td>
                 <td>{manage ? <GradeForm s={s} max={a.max_points} onSaved={load} />
-                  : s.grade ? `${s.grade.points}/${a.max_points} ${s.grade.feedback ? "· " + s.grade.feedback : ""}`
+                  : s.grade ? `${scoreText(s, a.max_points)} ${s.grade.feedback ? "· " + s.grade.feedback : ""}`
                   : <span className="muted">Not graded</span>}</td>
               </tr>
             ))}
@@ -132,9 +199,10 @@ function GradeForm({ s, max, onSaved }) {
   return (
     <form className="row" onSubmit={save}>
       <input type="number" min="0" max={max} step="0.5" required value={points}
-        onChange={(e) => setPoints(e.target.value)} style={{ width: 70 }} />
+        aria-label="Points" onChange={(e) => setPoints(e.target.value)} style={{ width: 70 }} />
       <input placeholder="Feedback" value={feedback} onChange={(e) => setFeedback(e.target.value)} />
       <button>{s.grade ? "Update" : "Save"}</button>
+      {s.grade?.penalty_percent > 0 && <span className="small muted">→ {s.grade.final_points} after late penalty</span>}
       {err && <span className="error">{err}</span>}
     </form>
   );

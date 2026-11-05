@@ -43,4 +43,14 @@ export const api = {
   fileUrl: (submissionId) => `/api/submissions/${submissionId}/file`,
 
   myGrades: () => request("GET", "/grades"),
+
+  // admin
+  users: (q = "") => request("GET", `/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  updateUser: (id, changes) => request("PATCH", `/admin/users/${id}`, changes),
+  resetPassword: (id, password) => request("POST", `/admin/users/${id}/password`, { password }),
+
+  // course TAs
+  staff: (courseId) => request("GET", `/courses/${courseId}/staff`),
+  addStaff: (courseId, email) => request("POST", `/courses/${courseId}/staff`, { email }),
+  removeStaff: (courseId, userId) => request("DELETE", `/courses/${courseId}/staff/${userId}`),
 };

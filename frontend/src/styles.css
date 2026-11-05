@@ -43,3 +43,11 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border);
 .small { font-size: 13px; }
 .error { color: var(--error); margin: 0; }
 .center { text-align: center; margin-top: 30vh; }
+.ok { color: #16803c; margin: 0; }
+button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.badge-late { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px;
+  border-radius: 999px; background: #fde8e8; color: #b42318; margin-left: 6px; }
+.staff { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 999px; }
+.chip button { padding: 0 4px; background: none; color: var(--muted); }

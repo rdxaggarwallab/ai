@@ -71,6 +71,30 @@ Then: an admin screen to manage users and roles, and the start of Phase 2 (in-br
 **2026-11-05: GitHub fixed.** You installed the Claude GitHub App, and the push worked. From now on
 all work is pushed to GitHub. Get it on your PC with `git clone` (first time) or `git pull`.
 
+## Session 2: 2026-11-05 (overnight, you asleep)
+
+**Status review** (you asked before you went to sleep): MVP 6/7, security 4/6. Problems found: TAs could
+manage every course, due dates were ignored, the timezone was shifted by 5.5h, the dev secret key could
+reach production, there was no CI, no password reset.
+
+**Your instruction:** "You have 10 hours. Do what you can till morning, then give the testing task to
+the session 'Deep testing of the accounting app' (runs on your PC)."
+
+**Defaults I chose while you slept (change them if you disagree):**
+- TAs are assigned per course
+- Late work is allowed but marked late, with an optional penalty % per assignment (or the teacher can block it)
+- Password reset: an admin resets it by hand (no email service yet)
+- Hosting: left open
+
+**Step A done:**
+- Admin page (search users, change roles, reset passwords) and the `flask create-admin` command
+- `course_staff` table: TAs manage only courses they're assigned to
+- Due dates sent as UTC from the browser, so 23:59 IST stays 23:59 IST. Late badge, penalty, "no late work" option
+- Login 10/min and register 5/min per IP. `LMS_ENV=production` refuses a weak secret key
+- GitHub Actions: pytest, migrations on PostgreSQL, `flask db check`, frontend build
+- Verified: 12 backend tests, and a browser test (admin makes TA, teacher assigns TA, student submits late,
+  TA grades 50, student sees 40/100 after the 20% penalty, in the Asia/Kolkata timezone)
+
 ### Decisions so far
 | # | Decision |
 |---|---|
@@ -79,6 +103,7 @@ all work is pushed to GitHub. Get it on your PC with `git clone` (first time) or
 | 3 | Local folder: `D:\aair\.web\LMS`. Code is built in the cloud and synced through GitHub (working since 2026-11-05) |
 | 4 | Working branch: `claude/bot-performance-optimization-mj3rme` |
 | 5 | Target: MVP plus Phase 2 first, then a pilot |
+| 6 | TAs per course; late work allowed and marked, with an optional penalty; admins reset passwords by hand (defaults, 2026-11-05) |
 
 ### Open questions for you
 - How many hours a week can you give?

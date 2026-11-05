@@ -6,6 +6,7 @@ import { Login, Register } from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import CoursePage from "./pages/Course";
 import Grades from "./pages/Grades";
+import Admin from "./pages/Admin";
 import "./styles.css";
 
 const AuthCtx = createContext(null);
@@ -29,6 +30,7 @@ function App() {
             <Route path="/" element={<Private><Dashboard /></Private>} />
             <Route path="/courses/:id" element={<Private><CoursePage /></Private>} />
             <Route path="/grades" element={<Private><Grades /></Private>} />
+            <Route path="/admin" element={<Private role="admin"><Admin /></Private>} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>
@@ -37,8 +39,11 @@ function App() {
   );
 }
 
-function Private({ children }) {
-  return useAuth().user ? children : <Navigate to="/login" />;
+function Private({ children, role }) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" />;
+  if (role && user.role !== role) return <Navigate to="/" />;
+  return children;
 }
 
 function Nav() {
@@ -55,6 +60,7 @@ function Nav() {
       <nav>
         <Link to="/">Courses</Link>
         {user.role === "student" && <Link to="/grades">My grades</Link>}
+        {user.role === "admin" && <Link to="/admin">Users</Link>}
         <span className="muted">{user.name} · {user.role}</span>
         <button className="link" onClick={logout}>Log out</button>
       </nav>

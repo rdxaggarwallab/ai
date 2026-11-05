@@ -13,6 +13,7 @@ def app(tmp_path):
         "SQLALCHEMY_DATABASE_URI": "sqlite://",
         "UPLOAD_DIR": str(tmp_path),
         "JWT_COOKIE_CSRF_PROTECT": False,
+        "RATELIMIT_ENABLED": False,
     })
     with app.app_context():
         db.create_all()

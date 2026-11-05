@@ -6,7 +6,7 @@ from flask import abort
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 
 from .extensions import db
-from .models import Course, Enrollment, User
+from .models import Course, CourseStaff, Enrollment, User
 
 _ph = PasswordHasher()
 
@@ -47,8 +47,17 @@ def login_required(*roles):
 
 
 def can_manage(user: User, course: Course) -> bool:
-    """Teachers manage their own courses; TAs and admins manage any."""
-    return user.role in ("admin", "ta") or course.teacher_id == user.id
+    """Admins manage all courses, teachers their own, TAs only courses they're assigned to."""
+    if user.role == "admin" or course.teacher_id == user.id:
+        return True
+    if user.role == "ta":
+        return (
+            db.session.query(CourseStaff)
+            .filter_by(user_id=user.id, course_id=course.id)
+            .first()
+            is not None
+        )
+    return False
 
 
 def is_enrolled(user: User, course: Course) -> bool:

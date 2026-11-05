@@ -1,12 +1,12 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, abort, current_app, request, send_file
 from werkzeug.utils import secure_filename
 
 from .extensions import db
-from .models import Assignment, Course, Grade, Submission
+from .models import Assignment, Course, Grade, Submission, now
 from .security import can_manage, can_view, is_enrolled, login_required
 
 bp = Blueprint("assignments", __name__)
@@ -35,15 +35,29 @@ def create_assignment(user, course_id):
     if not title:
         abort(400, "Title is required")
     try:
-        due_at = datetime.fromisoformat(data["due_at"]) if data.get("due_at") else None
+        due_at = parse_due(data.get("due_at"))
         max_points = int(data.get("max_points", 100))
+        penalty = int(data.get("late_penalty_percent", 0))
     except (ValueError, TypeError):
-        abort(400, "Invalid due date or points")
+        abort(400, "Invalid due date, points or penalty")
+    if max_points < 1:
+        abort(400, "Points must be at least 1")
+    if not 0 <= penalty <= 100:
+        abort(400, "Late penalty must be between 0 and 100")
     a = Assignment(course_id=course.id, title=title, description=data.get("description", ""),
-                   due_at=due_at, max_points=max_points)
+                   due_at=due_at, max_points=max_points,
+                   allow_late=bool(data.get("allow_late", True)), late_penalty_percent=penalty)
     db.session.add(a)
     db.session.commit()
     return a.to_dict(), 201
+
+
+def parse_due(value):
+    """Parse an ISO date. The browser sends UTC ('...Z'); a time without a zone is taken as UTC."""
+    if not value:
+        return None
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 @bp.post("/assignments/<int:assignment_id>/submissions")
@@ -53,6 +67,8 @@ def submit(user, assignment_id):
     course = db.session.get(Course, a.course_id)
     if not is_enrolled(user, course):
         abort(403, "Enroll in this course first")
+    if not a.allow_late and a.is_late(now()):
+        abort(400, "The deadline has passed and late submissions are not accepted")
     f = request.files.get("file")
     if not f or not f.filename:
         abort(400, "No file uploaded")

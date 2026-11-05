@@ -3,7 +3,7 @@ import re
 from flask import Blueprint, abort, jsonify, request
 from flask_jwt_extended import create_access_token, set_access_cookies, unset_jwt_cookies
 
-from .extensions import db
+from .extensions import db, limiter
 from .models import User
 from .security import check_password, hash_password, login_required
 
@@ -15,6 +15,7 @@ SELF_REGISTER_ROLES = ("student", "teacher")
 
 
 @bp.post("/register")
+@limiter.limit("5 per minute")
 def register():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
@@ -40,6 +41,7 @@ def register():
 
 
 @bp.post("/login")
+@limiter.limit("10 per minute")
 def login():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()

@@ -40,11 +40,23 @@ npm run dev               # app on http://localhost:3000
 
 **4. Run the tests** (backend terminal): `python -m pytest -q`
 
+## Create the first admin
+Admins can't sign up on the website. Create one from the backend terminal:
+```powershell
+flask create-admin you@institute.edu "Your Name"                       # without Docker
+docker compose exec api flask create-admin you@institute.edu "Your Name"   # with Docker
+```
+It asks for a password. If the email already has an account, that account is promoted to admin.
+
 ## Try it
 1. Register as a **Teacher**. Create a course, open it, and add an assignment.
 2. In a private or incognito window, register as a **Student**. Enroll, open the course and upload a `.py` file.
 3. Back as the teacher, refresh the page and enter a grade and feedback.
 4. As the student, open **My grades**.
+5. As admin, open **Users**, register a third person and change their role to **ta**. As the teacher,
+   add them under **Teaching assistants** on the course page. The TA can now grade that course only.
+6. Create an assignment with a due date in the past and a late penalty. The student's submission
+   shows a **late** badge, and the grade shows the penalty.
 
 ## What works (MVP)
 - ✅ Register and login (student or teacher), with the token in an httpOnly cookie and CSRF protection
@@ -53,11 +65,17 @@ npm run dev               # app on http://localhost:3000
 - ✅ File submission (.py .ipynb .pdf .zip .txt .md .png .jpg, max 20 MB)
 - ✅ Grading with feedback, and a student grades page
 - ✅ Permission checks on the server: students see only their own work, teachers only their own courses
+- ✅ Admin page: search users, change roles, reset passwords
+- ✅ TAs assigned per course
+- ✅ Due dates in the right timezone, late badge, late penalty %, or late work blocked
+- ✅ Login limited to 10 tries a minute (register: 5)
 
 ## Settings (environment variables)
 | Variable | Default | Notes |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://lms:lms@localhost:5432/lms` | |
-| `JWT_SECRET_KEY` | dev key | **Must be changed** before real use (a long random string) |
+| `LMS_ENV` | (unset) | Set to `production` on a real server: the app then refuses to start without a proper secret key |
+| `JWT_SECRET_KEY` | dev key | **Must be changed** before real use: 32+ random characters |
 | `COOKIE_SECURE` | `false` | Set to `true` when served over HTTPS |
 | `UPLOAD_DIR` | `backend/uploads` | |
+| `RATELIMIT_STORAGE_URI` | `memory://` | Use `redis://...` when running more than one server process, so limits are shared |
