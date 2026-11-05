@@ -111,6 +111,23 @@ the session 'Deep testing of the accounting app' (runs on your PC)."
 - Cloud-machine workarounds (not needed on your PC): Docker Hub rate-limited here, so the image was built from
   mirror.gcr.io. The jsDelivr CDN is blocked here, so Pyodide falls back to the bundled copy (core Python only).
 
+**Also fixed:** `grader.py` imported the Unix-only `resource` module, which would have crashed the backend on
+Windows. Fixed, and CI now also runs the backend tests on Windows.
+**CI:** all 4 runs green (Linux backend with the sandbox image, Windows backend, frontend build).
+
+**Handoff:** the testing task was sent to the session "Deep testing of the accounting app"
+(`session_01ACNqEymmzmCDDPPmoH5K4L`, runs on your PC). It follows `docs/TESTING.md` and writes
+`notes/test-report-<date>.md`.
+
+**Morning to-do for you:**
+1. Check that the testing session got the message and is running (keep the PC awake and Docker Desktop on).
+2. Read the test report when it's done, and send it to the build session.
+3. Confirm or change the overnight defaults (TAs, late work, password reset).
+4. Decide on hosting for the pilot, and which course and how many students.
+
+**Next build steps (after the test report):** fix what testing finds, public tests students can run
+before submitting, a submission-attempt limit, deployment (HTTPS, real secret, backups), then Phase 3.
+
 ### Decisions so far
 | # | Decision |
 |---|---|
