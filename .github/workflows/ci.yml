@@ -31,8 +31,10 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+      - name: Build autograder sandbox image (so sandbox tests run, not skip)
+        run: docker build -t lms-grader:latest ../grader
       - name: Unit tests
-        run: python -m pytest -q
+        run: python -m pytest -q -rs
       - name: Migrations apply cleanly to PostgreSQL
         run: flask db upgrade
       - name: Models and migrations are in sync

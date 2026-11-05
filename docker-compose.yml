@@ -1,5 +1,12 @@
-# Starts the database, API and web app:  docker compose up --build
+# Starts everything:  docker compose up --build
 # Then open http://localhost:3000
+x-api-env: &api-env
+  DATABASE_URL: postgresql://lms:lms@db:5432/lms
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-key-change-me-in-production-0000}
+  UPLOAD_DIR: /data/uploads
+  AUTOGRADER: docker
+  GRADER_IMAGE: lms-grader:latest
+
 services:
   db:
     image: postgres:16
@@ -15,14 +22,35 @@ services:
 
   api:
     build: ./backend
-    environment:
-      DATABASE_URL: postgresql://lms:lms@db:5432/lms
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-key-change-me-in-production-0000}
-      UPLOAD_DIR: /data/uploads
+    environment: *api-env
     volumes: [uploads:/data/uploads]
     ports: ["5000:5000"]
     depends_on:
       db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
+      interval: 3s
+      retries: 30
+
+  # Builds the sandbox image student code runs in, then exits.
+  grader-image:
+    build: ./grader
+    image: lms-grader:latest
+    command: ["true"]
+
+  # Picks up submissions and runs the hidden tests in the sandbox.
+  # It talks to Docker on your machine to start one throwaway container per submission.
+  # Note: access to the Docker socket is powerful; this worker only runs our own code.
+  worker:
+    build: ./backend
+    command: ["flask", "grade-worker"]
+    environment: *api-env
+    volumes:
+      - uploads:/data/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      api: { condition: service_healthy }  # api applies database migrations first
+      grader-image: { condition: service_completed_successfully }
 
   web:
     build: ./frontend

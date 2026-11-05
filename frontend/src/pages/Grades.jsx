@@ -21,7 +21,12 @@ export default function Grades() {
                   {r.late && <span className="badge-late">late</span>}</td>
                 <td>{r.grade ? (r.grade.penalty_percent
                   ? `${r.grade.final_points}/${r.max_points} (${r.grade.points} − ${r.grade.penalty_percent}% late)`
-                  : `${r.grade.final_points}/${r.max_points}`) : <span className="muted">Pending</span>}</td>
+                  : `${r.grade.final_points}/${r.max_points}`)
+                  : r.autograde?.status === "done"
+                    ? <span>{r.autograde.points}/{r.max_points} <span className="muted small">(autograder: {r.autograde.passed}/{r.autograde.total} tests, teacher may adjust)</span></span>
+                    : r.autograde?.status === "error" ? <span className="muted">Autograder error, teacher will check</span>
+                    : r.autograde ? <span className="muted">Autograder running…</span>
+                    : <span className="muted">Pending</span>}</td>
                 <td>{r.grade?.feedback}</td>
               </tr>
             ))}

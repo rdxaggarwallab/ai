@@ -54,3 +54,6 @@ db.sqlite3
 
 # App data
 uploads/
+
+# Copied from node_modules by scripts/copy-pyodide.mjs
+frontend/public/pyodide/

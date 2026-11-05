@@ -2,6 +2,17 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../main";
+import PythonEditor from "../components/PythonEditor";
+
+const SAMPLE_TESTS = `# Hidden tests: students never see this. Their code is saved as solution.py.
+from solution import add
+
+def test_add():
+    assert add(2, 3) == 5
+
+def test_add_negative():
+    assert add(-1, 1) == 0
+`;
 
 export default function CoursePage() {
   const { id } = useParams();
@@ -83,7 +94,7 @@ function Staff({ courseId }) {
 
 function NewAssignment({ courseId, onCreated }) {
   const empty = { title: "", description: "", due_at: "", max_points: 100,
-    allow_late: true, late_penalty_percent: 0 };
+    allow_late: true, late_penalty_percent: 0, kind: "file", starter_code: "", test_code: "" };
   const [form, setForm] = useState(empty);
   const [error, setError] = useState("");
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
@@ -99,8 +110,13 @@ function NewAssignment({ courseId, onCreated }) {
     } catch (err) { setError(err.message); }
   };
   return (
-    <form className="card row" onSubmit={submit}>
+    <form className="card stack" onSubmit={submit}>
+      <div className="row">
       <input placeholder="Assignment title" required value={form.title} onChange={set("title")} />
+      <select value={form.kind} onChange={set("kind")} aria-label="Assignment type">
+        <option value="file">File upload</option>
+        <option value="code">Python code (editor + autograder)</option>
+      </select>
       <input placeholder="Instructions" value={form.description} onChange={set("description")} />
       <label className="small">Due <input type="datetime-local" value={form.due_at} onChange={set("due_at")} /></label>
       <label className="small">Points <input type="number" min="1" value={form.max_points}
@@ -110,8 +126,25 @@ function NewAssignment({ courseId, onCreated }) {
         <label className="small">Late penalty % <input type="number" min="0" max="100"
           value={form.late_penalty_percent} onChange={set("late_penalty_percent")} style={{ width: 70 }} /></label>
       )}
-      <button>Add assignment</button>
-      {error && <p className="error">{error}</p>}
+      </div>
+      {form.kind === "code" && (
+        <>
+          <span className="field-label">Starter code (students see this)</span>
+          <PythonEditor value={form.starter_code} height="140px" runnable
+            placeholder="def add(a, b):\n    # your code here\n    pass"
+            onChange={(v) => setForm((f) => ({ ...f, starter_code: v }))} />
+          <span className="field-label">Hidden tests (pytest). Leave empty for no autograding.
+            {" "}<button type="button" className="link small" onClick={() => setForm((f) => ({ ...f, test_code: SAMPLE_TESTS }))}>
+              Insert example</button></span>
+          <PythonEditor value={form.test_code} height="180px"
+            placeholder="from solution import add\n\ndef test_add():\n    assert add(2, 3) == 5"
+            onChange={(v) => setForm((f) => ({ ...f, test_code: v }))} />
+        </>
+      )}
+      <div className="row">
+        <button>Add assignment</button>
+        {error && <p className="error">{error}</p>}
+      </div>
     </form>
   );
 }
@@ -123,12 +156,54 @@ function scoreText(s, max) {
   return g.penalty_percent ? `${base} (${g.points} − ${g.penalty_percent}% late)` : base;
 }
 
+function AutoStatus({ s }) {
+  const ag = s.autograde;
+  if (!ag) return null;
+  if (ag.status === "pending" || ag.status === "running")
+    return <div className="auto muted">⏳ Autograder running…</div>;
+  if (ag.status === "error") return <div className="auto error">⚠ Autograder error</div>;
+  return <div className="auto done">✔ {ag.passed}/{ag.total} tests passed · {ag.points} pts</div>;
+}
+
 function Assignment({ a, manage }) {
   const [subs, setSubs] = useState([]);
   const [file, setFile] = useState(null);
+  const [code, setCode] = useState(a.starter_code || "");
   const [msg, setMsg] = useState("");
-  const load = () => api.submissions(a.id).then(setSubs).catch((e) => setMsg(e.message));
-  useEffect(() => { load(); }, [a.id]);
+  const [viewing, setViewing] = useState(null);
+  const load = () => api.submissions(a.id).then((list) => { setSubs(list); return list; })
+    .catch((e) => { setMsg(e.message); return []; });
+
+  useEffect(() => {
+    // Students reopen their latest attempt in the editor.
+    load().then((list) => {
+      if (!manage && a.kind === "code" && list.length) {
+        api.code(list[0].id).then((r) => setCode(r.code)).catch(() => {});
+      }
+    });
+  }, [a.id]);
+
+  // Poll while any submission is still being graded.
+  const busy = subs.some((s) => s.autograde && ["pending", "running"].includes(s.autograde.status));
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [busy]);
+
+  const submitCode = async () => {
+    setMsg("");
+    try {
+      const s = await api.submitCode(a.id, code);
+      setMsg(s.late ? "Submitted, but late" : "Submitted ✓");
+      load();
+    } catch (err) { setMsg(err.message); }
+  };
+
+  const regradeAll = async () => {
+    try { const r = await api.regradeAll(a.id); setMsg(`${r.queued} submission(s) queued for regrading`); load(); }
+    catch (err) { setMsg(err.message); }
+  };
 
   const pastDue = a.due_at && new Date(a.due_at) < new Date();
   const closed = pastDue && !a.allow_late;
@@ -154,7 +229,20 @@ function Assignment({ a, manage }) {
           : " · no late work")}</span></h3>
       <p>{a.description}</p>
 
-      {!manage && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
+      {a.autograded && <p className="muted small">🧪 Autograded: your code is tested on the server when you submit.</p>}
+      {manage && a.autograded && (
+        <div className="row"><button className="secondary" onClick={regradeAll}>Regrade all</button></div>
+      )}
+
+      {!manage && a.kind === "code" && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
+        <div className="stack">
+          <PythonEditor value={code} onChange={setCode} runnable />
+          <div className="row"><button onClick={submitCode} disabled={!code.trim()}>
+            {pastDue ? "Submit late" : "Submit code"}</button></div>
+        </div>
+      ))}
+
+      {!manage && a.kind !== "code" && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
         <form className="row" onSubmit={upload}>
           <input type="file" accept=".py,.ipynb,.pdf,.zip,.txt,.md,.png,.jpg"
             onChange={(e) => setFile(e.target.files[0])} />
@@ -172,23 +260,50 @@ function Assignment({ a, manage }) {
             {subs.map((s) => (
               <tr key={s.id}>
                 {manage && <td>{s.student}</td>}
-                <td><a href={api.fileUrl(s.id)}>{s.original_name}</a></td>
+                <td><a href={api.fileUrl(s.id)}>{s.original_name}</a>
+                  {a.kind === "code" && <> · <button className="link small" onClick={() => setViewing(s)}>view</button></>}</td>
                 <td className="small">{new Date(s.submitted_at).toLocaleString()}
                   {s.late && <span className="badge-late">late</span>}</td>
-                <td>{manage ? <GradeForm s={s} max={a.max_points} onSaved={load} />
+                <td><AutoStatus s={s} />
+                  {manage ? <GradeForm s={s} max={a.max_points} onSaved={load} />
                   : s.grade ? `${scoreText(s, a.max_points)} ${s.grade.feedback ? "· " + s.grade.feedback : ""}`
-                  : <span className="muted">Not graded</span>}</td>
+                  : !s.autograde && <span className="muted">Not graded</span>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {viewing && <SubmissionViewer s={viewing} manage={manage} onClose={() => setViewing(null)} onRegraded={load} />}
     </div>
   );
 }
 
+function SubmissionViewer({ s, manage, onClose, onRegraded }) {
+  const [code, setCode] = useState("Loading…");
+  const [err, setErr] = useState("");
+  useEffect(() => { api.code(s.id).then((r) => setCode(r.code)).catch((e) => setCode(e.message)); }, [s.id]);
+  const regrade = async () => {
+    try { await api.regrade(s.id); onRegraded(); onClose(); } catch (e) { setErr(e.message); }
+  };
+  return (
+    <dialog open aria-label="Submission">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3 style={{ margin: 0 }}>{s.student} · {new Date(s.submitted_at).toLocaleString()}</h3>
+        <button className="secondary" onClick={onClose}>Close</button>
+      </div>
+      <PythonEditor value={code} readOnly runnable={manage} height="300px" />
+      {manage && s.autograde?.log && (<><h4>Autograder output</h4><pre className="log">{s.autograde.log}</pre></>)}
+      {manage && s.autograde && <button className="secondary" onClick={regrade}>Regrade</button>}
+      {err && <p className="error">{err}</p>}
+    </dialog>
+  );
+}
+
 function GradeForm({ s, max, onSaved }) {
-  const [points, setPoints] = useState(s.grade?.points ?? "");
+  const [points, setPoints] = useState(s.grade?.points ?? s.autograde?.points ?? "");
+  useEffect(() => {
+    if (!s.grade && s.autograde?.points != null) setPoints(s.autograde.points);
+  }, [s.autograde?.points]);
   const [feedback, setFeedback] = useState(s.grade?.feedback ?? "");
   const [err, setErr] = useState("");
   const save = async (e) => {

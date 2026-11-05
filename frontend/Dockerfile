@@ -3,4 +3,4 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-CMD ["npx", "vite", "--port", "3000", "--host"]
+CMD ["npm", "run", "dev", "--", "--port", "3000", "--host"]

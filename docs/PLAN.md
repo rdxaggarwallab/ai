@@ -15,8 +15,9 @@ You (review, testing, deployment, decisions) and Claude (code, tests, docs).
 | Database | PostgreSQL |
 | Auth | Passwords hashed with argon2. Session token (JWT) in an httpOnly cookie |
 | Files | Local disk in development. S3 or MinIO in production |
-| Grading jobs | Redis job queue (RQ) feeding a locked-down Docker runner (Phase 2) |
-| Notebooks | JupyterLite in the browser (Phase 2), JupyterHub (Phase 3) |
+| Grading jobs | `flask grade-worker` polls the database (no Redis needed) and runs each submission in a throwaway Docker container |
+| In-browser Python | Pyodide in a Web Worker, CodeMirror editor |
+| Notebooks | JupyterHub (Phase 3) |
 | Dev / CI | Docker Compose, GitHub Actions |
 
 ## Roadmap
@@ -35,10 +36,12 @@ You (review, testing, deployment, decisions) and Claude (code, tests, docs).
 - [ ] Password reset by email (admins reset passwords by hand for now)
 
 ### Phase 2: Coding (3–4 weeks)
-- [ ] JupyterLite or Pyodide editor embedded in assignments
-- [ ] Server-side autograder: tests students can see plus hidden tests (pytest/nbgrader) in a Docker sandbox with no network and CPU, memory and time limits
+- [x] Python editor in the browser (CodeMirror + Pyodide in a Web Worker): Run, Stop, 15s limit; works offline for core Python
+- [x] Server-side autograder: hidden pytest tests in a Docker sandbox (no network, read-only, 256MB, 1 CPU, 64 processes, non-root, time limit); `flask grade-worker`; regrade one or all
+- [ ] Tests students can see (public tests they run before submitting)
+- [ ] Jupyter notebook (.ipynb) assignments
 - [ ] Submission history, resubmission limits (late rules done in MVP)
-- [ ] Rubrics that combine the automatic score with manual marks
+- [~] Autograder score pre-fills the teacher's grade (full rubrics still to do)
 
 ### Phase 3: Compute (4–6 weeks)
 - [ ] JupyterHub with a container per student (DockerSpawner)
@@ -60,7 +63,8 @@ assignments  id, course_id -> courses, title, description, due_at, max_points
 submissions  id, assignment_id, student_id -> users, file_path, submitted_at
 grades       id, submission_id (unique), points, feedback, graded_by -> users, graded_at
 course_staff id, user_id -> users (role ta), course_id -> courses        (unique user+course)
-assignments  + allow_late, late_penalty_percent
+assignments  + allow_late, late_penalty_percent, kind (file|code), starter_code, test_code (hidden)
+submissions  + grading_status, tests_passed, tests_total, auto_points, grading_log (staff only)
 ```
 
 ## Security checklist
@@ -69,5 +73,5 @@ assignments  + allow_late, late_penalty_percent
 - [x] Permission checks on every API route (not only in the UI)
 - [x] Uploads checked for type and size and stored outside the web root
 - [x] `LMS_ENV=production` refuses to start without a real secret key and turns on Secure cookies
-- [ ] Student code only ever runs in a sandbox
+- [x] Student code only ever runs in a sandbox on the server (`AUTOGRADER=local-unsafe` is refused in production)
 - [ ] Policy on how long student data is kept and who can see grades

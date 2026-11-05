@@ -38,6 +38,11 @@ export const api = {
     fd.append("file", file);
     return request("POST", `/assignments/${assignmentId}/submissions`, fd);
   },
+  submitCode: (assignmentId, code) => request("POST", `/assignments/${assignmentId}/submissions`, { code }),
+  code: (submissionId) => request("GET", `/submissions/${submissionId}/code`),
+  updateAssignment: (id, changes) => request("PATCH", `/assignments/${id}`, changes),
+  regrade: (submissionId) => request("POST", `/submissions/${submissionId}/regrade`),
+  regradeAll: (assignmentId) => request("POST", `/assignments/${assignmentId}/regrade`),
   grade: (submissionId, points, feedback) =>
     request("PUT", `/submissions/${submissionId}/grade`, { points, feedback }),
   fileUrl: (submissionId) => `/api/submissions/${submissionId}/file`,

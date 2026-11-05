@@ -1,4 +1,6 @@
 FROM python:3.12-slim
+# Docker command-line tool, used by the grade worker to start sandbox containers.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -95,6 +95,22 @@ the session 'Deep testing of the accounting app' (runs on your PC)."
 - Verified: 12 backend tests, and a browser test (admin makes TA, teacher assigns TA, student submits late,
   TA grades 50, student sees 40/100 after the 20% penalty, in the Asia/Kolkata timezone)
 
+**Phase 2 done (same night):**
+- Coding assignments: the teacher writes starter code and hidden pytest tests. Students write code in a browser
+  editor (CodeMirror), Run it in the browser (Pyodide in a Web Worker, Stop button, 15s limit), and Submit.
+- Autograder: `flask grade-worker` takes pending submissions and runs them in a Docker sandbox (no network,
+  read-only, 256MB, 1 CPU, 64 processes, non-root user, time limit). Score = passed/total × points,
+  pre-filled into the teacher's grade. Regrade one or all. Students never see the hidden tests or the log.
+- docker-compose now also has `worker` and `grader-image`. CI builds the sandbox image so the escape tests run.
+- Verified: 20 backend tests, including real sandbox escape attempts (infinite loop, network, fork bomb,
+  600MB allocation, writing to /etc, root check). Browser test: teacher creates a code assignment, student
+  runs code in the browser and stops an infinite loop, a buggy submission scores 2/4 and the fixed one 4/4,
+  the teacher sees the pre-filled grade, code and log.
+- Known limit: student code and the tests share one Python process, so a determined student could tamper
+  with pytest. That's acceptable for a pilot. Teachers can view the code, and the Phase 3 similarity check helps.
+- Cloud-machine workarounds (not needed on your PC): Docker Hub rate-limited here, so the image was built from
+  mirror.gcr.io. The jsDelivr CDN is blocked here, so Pyodide falls back to the bundled copy (core Python only).
+
 ### Decisions so far
 | # | Decision |
 |---|---|
