@@ -83,12 +83,21 @@ class Assignment(db.Model):
     max_points = db.Column(db.Integer, nullable=False, default=100)
     allow_late = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     late_penalty_percent = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    # "file": upload any allowed file. "code": write Python in the browser editor.
+    kind = db.Column(db.String(10), nullable=False, default="file", server_default="file")
+    starter_code = db.Column(db.Text, nullable=False, default="", server_default="")
+    # pytest tests run against the student's solution.py. Never shown to students.
+    test_code = db.Column(db.Text, nullable=False, default="", server_default="")
+
+    @property
+    def autograded(self):
+        return bool(self.test_code.strip())
 
     def is_late(self, when):
         return self.due_at is not None and as_utc(when) > as_utc(self.due_at)
 
-    def to_dict(self):
-        return {
+    def to_dict(self, staff=False):
+        d = {
             "id": self.id,
             "course_id": self.course_id,
             "title": self.title,
@@ -97,7 +106,13 @@ class Assignment(db.Model):
             "max_points": self.max_points,
             "allow_late": self.allow_late,
             "late_penalty_percent": self.late_penalty_percent,
+            "kind": self.kind,
+            "starter_code": self.starter_code,
+            "autograded": self.autograded,
         }
+        if staff:
+            d["test_code"] = self.test_code
+        return d
 
 
 class Submission(db.Model):
@@ -108,6 +123,13 @@ class Submission(db.Model):
     file_path = db.Column(db.String(500), nullable=False)
     original_name = db.Column(db.String(255), nullable=False)
     submitted_at = db.Column(db.DateTime(timezone=True), default=now)
+    # Autograder: none -> pending -> running -> done | error
+    grading_status = db.Column(db.String(10), nullable=False, default="none", server_default="none")
+    tests_passed = db.Column(db.Integer)
+    tests_total = db.Column(db.Integer)
+    auto_points = db.Column(db.Float)
+    grading_log = db.Column(db.Text)  # full pytest output: staff only (may reveal hidden tests)
+    graded_started_at = db.Column(db.DateTime(timezone=True))
     student = db.relationship("User")
     assignment = db.relationship("Assignment")
     grade = db.relationship("Grade", uselist=False, back_populates="submission")
@@ -116,7 +138,7 @@ class Submission(db.Model):
     def late(self):
         return self.assignment.is_late(self.submitted_at)
 
-    def to_dict(self):
+    def to_dict(self, staff=False):
         grade = None
         if self.grade:
             grade = self.grade.to_dict()
@@ -132,6 +154,13 @@ class Submission(db.Model):
             "submitted_at": iso(self.submitted_at),
             "late": self.late,
             "grade": grade,
+            "autograde": {
+                "status": self.grading_status,
+                "passed": self.tests_passed,
+                "total": self.tests_total,
+                "points": self.auto_points,
+                **({"log": self.grading_log} if staff else {}),
+            } if self.grading_status != "none" else None,
         }
 
 

@@ -30,6 +30,7 @@ def create_app(config: dict | None = None) -> Flask:
         AUTOGRADER=os.environ.get("AUTOGRADER", "docker"),  # docker | local-unsafe | off
         GRADER_IMAGE=os.environ.get("GRADER_IMAGE", "lms-grader:latest"),
         GRADER_TIMEOUT=int(os.environ.get("GRADER_TIMEOUT", "30")),
+        GRADE_INLINE=False,  # tests only: grade during the request instead of in the worker
     )
     if config:
         app.config.update(config)
@@ -66,6 +67,9 @@ def create_app(config: dict | None = None) -> Flask:
     @app.errorhandler(429)
     def too_many(e):
         return jsonify(error="Too many attempts. Wait a minute and try again."), 429
+
+    from .grader import register_cli
+    register_cli(app)
 
     @app.get("/api/health")
     def health():
