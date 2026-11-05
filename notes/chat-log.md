@@ -68,12 +68,15 @@ Claude sends files and a zip of the project to you directly. Save them into `D:\
 **Next session:** you run it on your PC (see `frontend/SETUP.md`) and report anything broken.
 Then: an admin screen to manage users and roles, and the start of Phase 2 (in-browser Python and the autograder).
 
+**2026-11-05: GitHub fixed.** You installed the Claude GitHub App, and the push worked. From now on
+all work is pushed to GitHub. Get it on your PC with `git clone` (first time) or `git pull`.
+
 ### Decisions so far
 | # | Decision |
 |---|---|
 | 1 | Build our own LMS (not Moodle, Canvas or Open edX) |
 | 2 | Team: you and Claude only |
-| 3 | Local folder: `D:\aair\.web\LMS`. Code is built in the cloud and synced through GitHub |
+| 3 | Local folder: `D:\aair\.web\LMS`. Code is built in the cloud and synced through GitHub (working since 2026-11-05) |
 | 4 | Working branch: `claude/bot-performance-optimization-mj3rme` |
 | 5 | Target: MVP plus Phase 2 first, then a pilot |
 
