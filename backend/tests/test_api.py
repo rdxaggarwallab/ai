@@ -21,11 +21,23 @@ def app(tmp_path):
 
 
 def client_for(app, email, role="student"):
+    """Sign up (always as a student, like the real app), then give the role an admin would."""
     c = app.test_client()
     r = c.post("/api/auth/register", json={"email": email, "name": email.split("@")[0],
-                                           "password": "password123", "role": role})
+                                           "password": "password123"})
     assert r.status_code == 201, r.json
+    if role != "student":
+        from app.models import User
+        db.session.query(User).filter_by(email=email).one().role = role
+        db.session.commit()
     return c
+
+def join(client, course_id):
+    """Enroll a student the way the app does: with the course's join code."""
+    from app.models import Course
+    code = db.session.get(Course, course_id).join_code
+    return client.post("/api/courses/join", json={"join_code": code})
+
 
 
 def test_register_login_me(app):
@@ -55,7 +67,7 @@ def test_full_flow(app):
 
     # must enroll before seeing or submitting
     assert s.get(f"/api/courses/{cid}/assignments").status_code == 403
-    assert s.post(f"/api/courses/{cid}/enroll").status_code == 201
+    assert join(s, cid).status_code == 201
     assert len(s.get(f"/api/courses/{cid}/assignments").json) == 1
 
     bad = s.post(f"/api/assignments/{aid}/submissions",

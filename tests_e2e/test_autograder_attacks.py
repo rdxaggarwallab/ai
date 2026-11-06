@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from conftest import client_for
+from conftest import client_for, join
 
 TESTS = ("from solution import add\n\n"
          "def test_pos():\n    assert add(2, 3) == 5\n\n"
@@ -75,7 +75,7 @@ def code_assignment(app):
     aid = t.post(f"/api/courses/{cid}/assignments", json={
         "title": "add", "kind": "code", "max_points": 10, "test_code": TESTS}).json["id"]
     s = client_for(app, "s@x.com")
-    s.post(f"/api/courses/{cid}/enroll")
+    join(s, cid)
     return s, aid
 
 

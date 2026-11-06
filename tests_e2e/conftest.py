@@ -44,11 +44,21 @@ def app(tmp_path):
 
 
 def client_for(app, email, role="student", password="password123"):
+    """Sign up (students only since the M7 fix), then give the role an admin would."""
     c = app.test_client()
     r = c.post("/api/auth/register", json={"email": email, "name": email.split("@")[0],
-                                           "password": password, "role": role})
+                                           "password": password})
     assert r.status_code == 201, r.json
+    if role != "student":
+        set_role(app, email, role)
     return c
+
+def join(client, course_id):
+    """Enroll a student the way the app does: with the course's join code."""
+    from app.models import Course
+    code = db.session.get(Course, course_id).join_code
+    return client.post("/api/courses/join", json={"join_code": code})
+
 
 
 def set_role(app, email, role):

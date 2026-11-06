@@ -1,14 +1,15 @@
 import os
+import re
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 
 from flask import Blueprint, abort, current_app, request, send_file
-from werkzeug.utils import secure_filename
-
-from .extensions import db
+from .extensions import db, limiter
 from .grader import grade_submission, sanitize_tests
 from .models import Assignment, Course, Grade, Submission, now
 from .security import can_manage, can_view, is_enrolled, login_required
+from .validate import body, get_bool, get_int, get_number, get_str
 
 bp = Blueprint("assignments", __name__)
 
@@ -35,7 +36,7 @@ def create_assignment(user, course_id):
     if not can_manage(user, course):
         abort(403, "Not your course")
     a = Assignment(course_id=course.id)
-    apply_fields(a, request.get_json(silent=True) or {}, creating=True)
+    apply_fields(a, body(), creating=True)
     db.session.add(a)
     db.session.commit()
     return a.to_dict(staff=True), 201
@@ -47,7 +48,7 @@ def update_assignment(user, assignment_id):
     a = db.get_or_404(Assignment, assignment_id)
     if not can_manage(user, db.session.get(Course, a.course_id)):
         abort(403, "Not your course")
-    apply_fields(a, request.get_json(silent=True) or {}, creating=False)
+    apply_fields(a, body(), creating=False)
     db.session.commit()
     return a.to_dict(staff=True)
 
@@ -58,27 +59,20 @@ def apply_fields(a, data, creating):
         return creating or k in data
 
     if given("title"):
-        title = (data.get("title") or "").strip()
-        if not title:
-            abort(400, "Title is required")
-        a.title = title
+        a.title = get_str(data, "title", required=True, max_len=200).strip()
     if given("description"):
-        a.description = data.get("description") or ""
-    try:
-        if given("due_at"):
-            a.due_at = parse_due(data.get("due_at"))
-        if given("max_points"):
-            a.max_points = int(data.get("max_points", 100))
-        if given("late_penalty_percent"):
-            a.late_penalty_percent = int(data.get("late_penalty_percent", 0))
-    except (ValueError, TypeError):
-        abort(400, "Invalid due date, points or penalty")
-    if a.max_points < 1:
-        abort(400, "Points must be at least 1")
-    if not 0 <= a.late_penalty_percent <= 100:
-        abort(400, "Late penalty must be between 0 and 100")
+        a.description = get_str(data, "description", max_len=20_000)
+    if given("due_at"):
+        a.due_at = parse_due(data.get("due_at"))
+    if given("max_points"):
+        a.max_points = get_int(data, "max_points", default=100, lo=1, hi=10_000, label="Points")
+    if given("late_penalty_percent"):
+        a.late_penalty_percent = get_int(data, "late_penalty_percent", default=0, lo=0, hi=100,
+                                         label="Late penalty")
+    if given("max_attempts"):
+        a.max_attempts = get_int(data, "max_attempts", default=20, lo=1, hi=1000, label="Attempts")
     if given("allow_late"):
-        a.allow_late = bool(data.get("allow_late", True))
+        a.allow_late = get_bool(data, "allow_late", default=True, label="Accept late work")
     if given("kind"):
         kind = data.get("kind", "file")
         if kind not in KINDS:
@@ -86,24 +80,42 @@ def apply_fields(a, data, creating):
         a.kind = kind
     for field in ("starter_code", "test_code"):
         if given(field):
-            text = sanitize_tests(data.get(field) or "")
-            if len(text) > MAX_CODE:
-                abort(400, f"{field} is too long")
-            setattr(a, field, text)
+            setattr(a, field, sanitize_tests(get_str(data, field, max_len=MAX_CODE)))
     if a.autograded and a.kind != "code":
         abort(400, "Autograder tests need a 'code' assignment (students submit solution.py)")
 
 
 def parse_due(value):
     """Parse an ISO date. The browser sends UTC ('...Z'); a time without a zone is taken as UTC."""
-    if not value:
+    if value in (None, ""):
         return None
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if not isinstance(value, str):
+        abort(400, "Due date must be a date like 2026-12-01T18:30:00Z")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        abort(400, "Due date must be a date like 2026-12-01T18:30:00Z")
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
+def display_name(filename: str) -> str:
+    """A safe file name to show and offer for download. Keeps non-English letters
+    (उत्तर.pdf stays उत्तर.pdf); drops folders, control characters and odd symbols.
+    The file itself is always stored under a random name."""
+    name = unicodedata.normalize("NFC", filename).replace("\\", "/").split("/")[-1]
+    name = re.sub(r"[^\w.\- ()]", "_", name, flags=re.UNICODE).strip(" .")
+    stem, ext = os.path.splitext(name)
+    return (stem[:100] or "file") + ext[:10]
+
+
+def _per_user():
+    from flask_jwt_extended import get_jwt_identity
+    return f"user:{get_jwt_identity()}"
 
 
 @bp.post("/assignments/<int:assignment_id>/submissions")
 @login_required("student")
+@limiter.limit("10 per minute", key_func=_per_user)  # per student, not per school network
 def submit(user, assignment_id):
     a = db.get_or_404(Assignment, assignment_id)
     course = db.session.get(Course, a.course_id)
@@ -111,6 +123,9 @@ def submit(user, assignment_id):
         abort(403, "Enroll in this course first")
     if not a.allow_late and a.is_late(now()):
         abort(400, "The deadline has passed and late submissions are not accepted")
+    used = db.session.query(Submission).filter_by(assignment_id=a.id, student_id=user.id).count()
+    if used >= a.max_attempts:
+        abort(400, f"You've used all {a.max_attempts} attempts for this assignment")
 
     # Stored under a random name outside any web root. Only the sandboxed grader runs it.
     folder = os.path.join(current_app.config["UPLOAD_DIR"], str(a.id))
@@ -119,8 +134,7 @@ def submit(user, assignment_id):
     if a.kind == "code":
         code = request.form.get("code")
         if code is None:
-            data = request.get_json(silent=True) or {}
-            code = data.get("code")
+            code = body().get("code")
         if not isinstance(code, str) or not code.strip():
             abort(400, "No code submitted")
         if len(code) > MAX_CODE:
@@ -132,7 +146,7 @@ def submit(user, assignment_id):
         f = request.files.get("file")
         if not f or not f.filename:
             abort(400, "No file uploaded")
-        original = secure_filename(f.filename) or "file"
+        original = display_name(f.filename)
         ext = os.path.splitext(original)[1].lower()
         if ext not in ALLOWED_EXT:
             abort(400, f"File type not allowed. Allowed: {', '.join(sorted(ALLOWED_EXT))}")
@@ -218,15 +232,11 @@ def grade(user, submission_id):
     course = db.session.get(Course, s.assignment.course_id)
     if not can_manage(user, course):
         abort(403, "Not your course")
-    data = request.get_json(silent=True) or {}
-    try:
-        points = float(data["points"])
-    except (KeyError, ValueError, TypeError):
-        abort(400, "Points are required")
-    if not 0 <= points <= s.assignment.max_points:
-        abort(400, f"Points must be between 0 and {s.assignment.max_points}")
+    data = body()
+    points = round(get_number(data, "points", lo=0, hi=s.assignment.max_points), 2)
+    feedback = get_str(data, "feedback", max_len=10_000)
     g = s.grade or Grade(submission_id=s.id, graded_by=user.id, points=points)
-    g.points, g.feedback, g.graded_by = points, data.get("feedback", ""), user.id
+    g.points, g.feedback, g.graded_by = points, feedback, user.id
     db.session.add(g)
     db.session.commit()
     return s.to_dict(staff=True)

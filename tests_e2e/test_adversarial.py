@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from conftest import client_for, make_app, set_role
+from conftest import client_for, make_app, set_role, join
 from app.extensions import db
 
 
@@ -24,7 +24,7 @@ def course(app, teacher_email="t@x.com", code="C1"):
 
 def enrolled_student(app, email, cid):
     s = client_for(app, email)
-    assert s.post(f"/api/courses/{cid}/enroll").status_code == 201
+    assert join(s, cid).status_code == 201
     return s
 
 
@@ -185,7 +185,8 @@ def test_bug_demoted_teacher_still_manages_own_course(app):
     set_role(app, "t@x.com", "student")
     assert t.get("/api/auth/me").json["role"] == "student"
     # can_manage() only compares course.teacher_id, so the demoted user keeps full control.
-    assert t.get(f"/api/courses/{cid}").json["can_manage"] is False
+    r = t.get(f"/api/courses/{cid}")  # now a student who hasn't joined: 404, or no control
+    assert r.status_code == 404 or r.json["can_manage"] is False
     assert t.get(f"/api/courses/{cid}/staff").status_code == 403
 
 

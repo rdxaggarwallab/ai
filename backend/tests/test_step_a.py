@@ -7,7 +7,7 @@ from app import create_app
 from app.extensions import db
 from app.models import User
 from app.security import hash_password
-from tests.test_api import app, client_for  # noqa: F401  (fixture reuse)
+from tests.test_api import app, client_for, join  # noqa: F401  (fixture reuse)
 
 
 def make_user(app, email, role, password="password123"):
@@ -81,7 +81,7 @@ def setup_course(app):
     t = client_for(app, "t@x.com", "teacher")
     s = client_for(app, "s@x.com")
     cid = t.post("/api/courses", json={"code": "C1", "title": "C"}).json["id"]
-    s.post(f"/api/courses/{cid}/enroll")
+    join(s, cid)
     return t, s, cid
 
 

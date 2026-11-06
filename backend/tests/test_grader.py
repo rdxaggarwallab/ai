@@ -6,7 +6,7 @@ import pytest
 from app.grader import DockerRunner, LocalUnsafeRunner, parse_output
 from app.extensions import db
 from app.models import Submission
-from tests.test_api import app, client_for  # noqa: F401
+from tests.test_api import app, client_for, join  # noqa: F401
 
 TESTS = """
 from solution import add, mul
@@ -228,7 +228,7 @@ def test_code_assignment_autograded(app):
     t = client_for(app, "t@x.com", "teacher")
     s = client_for(app, "s@x.com")
     cid = t.post("/api/courses", json={"code": "PY1", "title": "Python"}).json["id"]
-    s.post(f"/api/courses/{cid}/enroll")
+    join(s, cid)
 
     assert t.post(f"/api/courses/{cid}/assignments",
                   json={"title": "x", "kind": "file", "test_code": TESTS}).status_code == 400
@@ -266,7 +266,7 @@ def test_worker_marks_error_when_grader_off(app):
     t = client_for(app, "t@x.com", "teacher")
     s = client_for(app, "s@x.com")
     cid = t.post("/api/courses", json={"code": "PY2", "title": "P"}).json["id"]
-    s.post(f"/api/courses/{cid}/enroll")
+    join(s, cid)
     aid = t.post(f"/api/courses/{cid}/assignments",
                  json={"title": "x", "kind": "code", "test_code": TESTS}).json["id"]
     sub = s.post(f"/api/assignments/{aid}/submissions", data={"code": GOOD}).json

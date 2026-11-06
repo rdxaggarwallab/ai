@@ -3,7 +3,9 @@ from datetime import timedelta
 
 import click
 from flask import Flask, jsonify
+from sqlalchemy.exc import DataError
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .extensions import db, jwt, limiter, migrate
 
@@ -44,6 +46,14 @@ def create_app(config: dict | None = None) -> Flask:
         if app.config["AUTOGRADER"] == "local-unsafe":
             raise RuntimeError("AUTOGRADER=local-unsafe is not allowed in production")
 
+    # The app always sits behind one proxy (Vite in development, the web server in Docker),
+    # so take the client's IP from X-Forwarded-For. Without this every user looks like the
+    # proxy and they all share one login rate limit. Set TRUSTED_PROXIES=0 if Flask is
+    # reachable directly, or 2 behind an extra load balancer.
+    hops = int(os.environ.get("TRUSTED_PROXIES", "1"))
+    if hops:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops)
+
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
@@ -67,6 +77,15 @@ def create_app(config: dict | None = None) -> Flask:
     @app.errorhandler(429)
     def too_many(e):
         return jsonify(error="Too many attempts. Wait a minute and try again."), 429
+
+    @app.errorhandler(413)
+    def too_large(e):
+        return jsonify(error="File is too large (max 20 MB)."), 413
+
+    @app.errorhandler(DataError)
+    def bad_data(e):  # e.g. a number too big for the database column
+        db.session.rollback()
+        return jsonify(error="Invalid value (out of range or too long)."), 400
 
     from .grader import register_cli
     register_cli(app)

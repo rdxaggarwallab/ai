@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone
 
 from .extensions import db
@@ -28,9 +29,16 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="student")
     created_at = db.Column(db.DateTime(timezone=True), default=now)
+    # Bumped on logout and password reset: every login token issued before that stops working.
+    token_version = db.Column(db.Integer, nullable=False, default=0, server_default="0")
 
     def to_dict(self):
         return {"id": self.id, "email": self.email, "name": self.name, "role": self.role}
+
+
+def new_join_code():
+    # No 0/O/1/I so codes are easy to read out in class.
+    return "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
 
 
 class Course(db.Model):
@@ -41,10 +49,12 @@ class Course(db.Model):
     description = db.Column(db.Text, default="")
     teacher_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=now)
+    # Students need this code to enroll. Only staff can see it.
+    join_code = db.Column(db.String(12), unique=True, nullable=False, default=new_join_code)
     teacher = db.relationship("User")
 
-    def to_dict(self):
-        return {
+    def to_dict(self, staff=False):
+        d = {
             "id": self.id,
             "code": self.code,
             "title": self.title,
@@ -52,6 +62,9 @@ class Course(db.Model):
             "teacher": self.teacher.name if self.teacher else None,
             "teacher_id": self.teacher_id,
         }
+        if staff:
+            d["join_code"] = self.join_code
+        return d
 
 
 class Enrollment(db.Model):
@@ -83,6 +96,8 @@ class Assignment(db.Model):
     max_points = db.Column(db.Integer, nullable=False, default=100)
     allow_late = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     late_penalty_percent = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    # How many times a student may submit (protects the disk and the grader).
+    max_attempts = db.Column(db.Integer, nullable=False, default=20, server_default="20")
     # "file": upload any allowed file. "code": write Python in the browser editor.
     kind = db.Column(db.String(10), nullable=False, default="file", server_default="file")
     starter_code = db.Column(db.Text, nullable=False, default="", server_default="")
@@ -106,6 +121,7 @@ class Assignment(db.Model):
             "max_points": self.max_points,
             "allow_late": self.allow_late,
             "late_penalty_percent": self.late_penalty_percent,
+            "max_attempts": self.max_attempts,
             "kind": self.kind,
             "starter_code": self.starter_code,
             "autograded": self.autograded,
@@ -144,7 +160,8 @@ class Submission(db.Model):
             grade = self.grade.to_dict()
             penalty = self.assignment.late_penalty_percent if self.late else 0
             grade["penalty_percent"] = penalty
-            grade["final_points"] = round(self.grade.points * (100 - penalty) / 100, 2)
+            raw = min(self.grade.points, self.assignment.max_points)  # max may have been lowered
+            grade["final_points"] = round(raw * (100 - penalty) / 100, 2)
         return {
             "id": self.id,
             "assignment_id": self.assignment_id,
@@ -158,7 +175,8 @@ class Submission(db.Model):
                 "status": self.grading_status,
                 "passed": self.tests_passed,
                 "total": self.tests_total,
-                "points": self.auto_points,
+                "points": None if self.auto_points is None
+                else min(self.auto_points, self.assignment.max_points),
                 **({"log": self.grading_log} if staff else {}),
             } if self.grading_status != "none" else None,
         }

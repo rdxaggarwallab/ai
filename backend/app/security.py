@@ -3,12 +3,13 @@ from functools import wraps
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from flask import abort
-from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
+from flask_jwt_extended import get_jwt, get_jwt_identity, verify_jwt_in_request
 
 from .extensions import db
 from .models import Course, CourseStaff, Enrollment, User
 
 _ph = PasswordHasher()
+DUMMY_HASH = _ph.hash("timing-equaliser-not-a-real-password")
 
 
 def hash_password(pw: str) -> str:
@@ -18,7 +19,7 @@ def hash_password(pw: str) -> str:
 def check_password(hashed: str, pw: str) -> bool:
     try:
         return _ph.verify(hashed, pw)
-    except VerifyMismatchError:
+    except (VerifyMismatchError, Exception):
         return False
 
 
@@ -26,6 +27,9 @@ def current_user() -> User:
     user = db.session.get(User, int(get_jwt_identity()))
     if user is None:
         abort(401, "User no longer exists")
+    # Tokens from before a logout or password reset are no longer accepted.
+    if get_jwt().get("tv", 0) != user.token_version:
+        abort(401, "Session ended. Please log in again.")
     return user
 
 
@@ -48,8 +52,10 @@ def login_required(*roles):
 
 def can_manage(user: User, course: Course) -> bool:
     """Admins manage all courses, teachers their own, TAs only courses they're assigned to."""
-    if user.role == "admin" or course.teacher_id == user.id:
+    if user.role == "admin":
         return True
+    if course.teacher_id == user.id:
+        return user.role == "teacher"  # a teacher whose role was removed loses control
     if user.role == "ta":
         return (
             db.session.query(CourseStaff)

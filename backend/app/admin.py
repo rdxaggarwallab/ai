@@ -3,6 +3,7 @@ from flask import Blueprint, abort, request
 from .extensions import db
 from .models import ROLES, Course, CourseStaff, User
 from .security import can_manage, hash_password, login_required
+from .validate import body, get_str
 
 bp = Blueprint("admin", __name__)
 
@@ -24,7 +25,7 @@ def list_users(admin):
 @login_required("admin")
 def update_user(admin, user_id):
     user = db.get_or_404(User, user_id)
-    data = request.get_json(silent=True) or {}
+    data = body()
     role = data.get("role")
     if role is not None:
         if role not in ROLES:
@@ -32,8 +33,8 @@ def update_user(admin, user_id):
         if user.id == admin.id and role != "admin":
             abort(400, "You can't remove your own admin role")
         user.role = role
-    if data.get("name"):
-        user.name = data["name"].strip()
+    if "name" in data:
+        user.name = get_str(data, "name", required=True, max_len=120).strip()
     db.session.commit()
     return user.to_dict()
 
@@ -42,10 +43,11 @@ def update_user(admin, user_id):
 @login_required("admin")
 def reset_password(admin, user_id):
     user = db.get_or_404(User, user_id)
-    password = (request.get_json(silent=True) or {}).get("password") or ""
+    password = get_str(body(), "password", required=True, max_len=200)
     if len(password) < 8:
         abort(400, "Password must be at least 8 characters")
     user.password_hash = hash_password(password)
+    user.token_version += 1  # log out every existing session of this user
     db.session.commit()
     return {"ok": True}
 
@@ -55,7 +57,7 @@ def reset_password(admin, user_id):
 def _managed_course(user, course_id):
     course = db.get_or_404(Course, course_id)
     # Only the course's teacher or an admin assigns TAs (TAs can't add other TAs).
-    if not (user.role == "admin" or course.teacher_id == user.id):
+    if not (user.role == "admin" or (user.role == "teacher" and course.teacher_id == user.id)):
         abort(403, "Only the course teacher or an admin can manage TAs")
     return course
 
@@ -74,7 +76,7 @@ def list_staff(user, course_id):
 @login_required("teacher", "admin")
 def add_staff(user, course_id):
     course = _managed_course(user, course_id)
-    email = ((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+    email = get_str(body(), "email", required=True, max_len=255).strip().lower()
     ta = db.session.query(User).filter_by(email=email).first()
     if ta is None:
         abort(404, "No user with that email")
