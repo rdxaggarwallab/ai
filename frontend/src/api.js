@@ -28,7 +28,8 @@ export const api = {
   courses: () => request("GET", "/courses"),
   course: (id) => request("GET", `/courses/${id}`),
   createCourse: (form) => request("POST", "/courses", form),
-  enroll: (id) => request("POST", `/courses/${id}/enroll`),
+  join: (joinCode) => request("POST", "/courses/join", { join_code: joinCode }),
+  newJoinCode: (id) => request("POST", `/courses/${id}/join-code`),
 
   assignments: (courseId) => request("GET", `/courses/${courseId}/assignments`),
   createAssignment: (courseId, form) => request("POST", `/courses/${courseId}/assignments`, form),

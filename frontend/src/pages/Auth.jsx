@@ -32,7 +32,7 @@ export function Login() {
 
 export function Register() {
   const { setUser } = useAuth();
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "student" });
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const submit = async (e) => {
@@ -46,15 +46,12 @@ export function Register() {
   };
   return (
     <form className="card auth" onSubmit={submit}>
-      <h1>Create account</h1>
+      <h1>Create student account</h1>
       <input placeholder="Full name" required value={form.name} onChange={set("name")} />
       <input type="email" placeholder="Email" required value={form.email} onChange={set("email")} />
       <input type="password" placeholder="Password (min 8 characters)" required minLength={8}
         value={form.password} onChange={set("password")} />
-      <select value={form.role} onChange={set("role")}>
-        <option value="student">Student</option>
-        <option value="teacher">Teacher</option>
-      </select>
+      <p className="muted small">Students sign up here. Teachers: ask an admin to give your account the teacher role.</p>
       {error && <p className="error">{error}</p>}
       <button>Register</button>
       <p className="muted">Have an account? <Link to="/login">Log in</Link></p>

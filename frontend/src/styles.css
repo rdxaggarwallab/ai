@@ -67,3 +67,26 @@ pre.log { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px
 dialog { border: 1px solid var(--border); border-radius: 12px; padding: 16px; width: min(900px, 95vw);
   background: var(--card); color: var(--text); }
 dialog::backdrop { background: rgba(0,0,0,.4); }
+.badge-latest { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px;
+  border-radius: 999px; background: #e0f2e9; color: #16803c; margin-left: 6px; }
+tr.older td { opacity: .6; }
+code.joincode { font-size: 15px; font-weight: 700; letter-spacing: 2px; padding: 2px 8px;
+  border-radius: 6px; background: #ece9ff; color: var(--accent); }
+
+/* Phones: nothing may push the page wider than the screen. Wide tables scroll inside themselves. */
+@media (max-width: 700px) {
+  main { padding: 16px 12px; }
+  .nav { padding: 10px 12px; }
+  .nav nav { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+  .nav a, .nav .link, .nav .muted { margin-left: 0; }
+  table { display: block; overflow-x: auto; max-width: 100%; }
+  .row { align-items: stretch; }
+  .row > input, .row > select, .row > label { flex: 1 1 100%; min-width: 0; }
+  .row > label input { width: 100% !important; }
+  td .row > input { flex: 1 1 auto; }
+  .grid { grid-template-columns: 1fr; }
+  pre.output, pre.log { font-size: 12px; }
+  h1 { font-size: 1.6rem; }
+}
+* { min-width: 0; }
+img, pre, .cm-editor { max-width: 100%; }

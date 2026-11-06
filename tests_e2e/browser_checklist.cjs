@@ -1,3 +1,6 @@
+// NOTE: written before the 2026-11-06 fixes. Teachers can no longer self-register and
+// students now join with a code instead of an Enroll button, so steps 1, 6 and 8 need
+// updating. browser_fixes.cjs covers the fixed behaviour.
 // Browser run of the docs/TESTING.md checklist (testing session, 2026-11-06).
 // Needs: API on :5000, `flask grade-worker` (docker mode), Vite on :3000, admin admin@lab.edu / adminpass123.
 // Usage: node tests_e2e/browser_checklist.cjs <screenshot-dir>

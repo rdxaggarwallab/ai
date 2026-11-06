@@ -1,12 +1,18 @@
-// Runs student Python in the browser with Pyodide, inside a Web Worker so a
-// runaway loop can't freeze the page (the page can terminate this worker).
-// This only runs code on the student's own computer; grading happens on the server.
+// Runs Python in the browser with Pyodide, inside a Web Worker so a runaway loop can't
+// freeze the page (the page terminates the worker).
+//
+// Security: the code may not be the viewer's own (a teacher pressing Run on a student's
+// submission). Before any user code runs, this worker deletes every way to reach the
+// network (fetch, XMLHttpRequest, WebSocket, ...), so the code can't call the LMS API
+// with the viewer's login or send data anywhere. Each worker runs ONE program and is then
+// thrown away; the page keeps a fresh one ready.
 
 const CDN = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
 const LOCAL = new URL("/pyodide/", self.location.origin).href;
 
 let pyodidePromise = null;
 let source = null; // "cdn" (all packages available) or "local" (core Python only)
+let used = false;
 
 async function cdnReachable() {
   try {
@@ -37,28 +43,60 @@ async function load() {
   return py;
 }
 
-self.onmessage = async (e) => {
-  const { id, code } = e.data;
-  const send = (msg) => self.postMessage({ id, ...msg });
-  try {
-    if (!pyodidePromise) {
-      send({ type: "status", text: "Loading Python (first run takes a few seconds)…" });
-      pyodidePromise = load();
+const NETWORK_APIS = [
+  "fetch", "XMLHttpRequest", "WebSocket", "WebSocketStream", "EventSource", "WebTransport",
+  "importScripts", "Worker", "SharedWorker", "BroadcastChannel", "indexedDB", "caches",
+  "Request", "Response", "Headers",
+];
+
+function cutNetwork() {
+  for (let o = self; o; o = Object.getPrototypeOf(o)) {
+    for (const name of NETWORK_APIS) {
+      if (Object.prototype.hasOwnProperty.call(o, name)) {
+        try { delete o[name]; } catch { /* ignore */ }
+        try {
+          Object.defineProperty(o, name, { value: undefined, writable: false, configurable: false });
+        } catch { /* ignore */ }
+      }
     }
+  }
+}
+
+const SETUP = `
+import builtins
+def _no_input(prompt=""):
+    raise RuntimeError(
+        "input() doesn't work in the browser editor. "
+        "Put example values in your code instead (e.g. name = 'Asha').")
+builtins.input = _no_input
+`;
+
+self.onmessage = async (e) => {
+  const { type, code } = e.data;
+  const send = (msg) => self.postMessage(msg);
+  if (!pyodidePromise) pyodidePromise = load();
+  if (type === "preload") {
+    try { await pyodidePromise; send({ type: "ready" }); } catch { /* reported on run */ }
+    return;
+  }
+  if (used) {
+    send({ type: "done", error: "Internal error: worker already used" });
+    return;
+  }
+  used = true;
+  try {
+    send({ type: "status", text: "Loading Python…" });
     const py = await pyodidePromise;
     py.setStdout({ batched: (text) => send({ type: "stdout", text }) });
     py.setStderr({ batched: (text) => send({ type: "stderr", text }) });
     if (source === "cdn") {
+      send({ type: "status", text: "Loading libraries…" });
       await py.loadPackagesFromImports(code);
     }
-    send({ type: "status", text: "" });
-    // Fresh globals each run so old variables don't leak between runs.
-    const globals = py.toPy({});
-    try {
-      await py.runPythonAsync(code, { globals });
-    } finally {
-      globals.destroy();
-    }
+    cutNetwork(); // from here on, nothing can reach the network
+    py.runPython(SETUP);
+    send({ type: "status", text: "" }); // code starts now: the page starts its time limit
+    await py.runPythonAsync(code);
     send({ type: "done" });
   } catch (err) {
     let msg = String(err.message || err);

@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true,
-    proxy: { "/api": process.env.API_URL || "http://localhost:5000" },
+    // xfwd adds X-Forwarded-For, so Flask sees each user's real IP (rate limits are per user).
+    proxy: { "/api": { target: process.env.API_URL || "http://localhost:5000", xfwd: true } },
   },
 });

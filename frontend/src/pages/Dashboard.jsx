@@ -10,16 +10,15 @@ export default function Dashboard() {
   const load = () => api.courses().then(setCourses).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
-  const enroll = async (id) => {
-    try { await api.enroll(id); load(); } catch (e) { setError(e.message); }
-  };
-
   return (
     <>
-      <h1>Courses</h1>
+      <h1>{user.role === "student" ? "My courses" : "Courses"}</h1>
       {error && <p className="error">{error}</p>}
+      {user.role === "student" && <JoinCourse onJoined={load} />}
       {["teacher", "admin"].includes(user.role) && <NewCourse onCreated={load} />}
-      {courses.length === 0 && <p className="muted">No courses yet.</p>}
+      {courses.length === 0 && <p className="muted">
+        {user.role === "student" ? "You haven't joined a course yet. Ask your teacher for the join code."
+          : user.role === "ta" ? "You haven't been added to a course yet." : "No courses yet."}</p>}
       <div className="grid">
         {courses.map((c) => (
           <div className="card" key={c.id}>
@@ -27,15 +26,37 @@ export default function Dashboard() {
             <h3>{c.title}</h3>
             <p className="muted">{c.description || "No description"}</p>
             <p className="muted small">Teacher: {c.teacher}</p>
-            {c.enrolled || c.can_manage ? (
-              <Link className="button" to={`/courses/${c.id}`}>Open</Link>
-            ) : user.role === "student" ? (
-              <button onClick={() => enroll(c.id)}>Enroll</button>
-            ) : null}
+            {c.join_code && <p className="small">Join code: <code className="joincode">{c.join_code}</code></p>}
+            <Link className="button" to={`/courses/${c.id}`}>Open</Link>
           </div>
         ))}
       </div>
     </>
+  );
+}
+
+function JoinCourse({ onJoined }) {
+  const [code, setCode] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(""); setMsg("");
+    try {
+      const c = await api.join(code.trim());
+      setMsg(`Joined ${c.code}: ${c.title}`);
+      setCode("");
+      onJoined();
+    } catch (err) { setError(err.message); }
+  };
+  return (
+    <form className="card row" onSubmit={submit}>
+      <input placeholder="Join code from your teacher" required value={code} aria-label="Join code"
+        onChange={(e) => setCode(e.target.value.toUpperCase())} style={{ textTransform: "uppercase" }} />
+      <button>Join course</button>
+      {msg && <span className="ok">{msg}</span>}
+      {error && <span className="error">{error}</span>}
+    </form>
   );
 }
 

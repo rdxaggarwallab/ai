@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../main";
@@ -32,24 +32,44 @@ export default function CoursePage() {
 
   if (error) return <p className="error">{error}</p>;
   if (!course) return <p>Loading…</p>;
-  if (!course.can_view) return <p className="muted">Enroll in this course to see it.</p>;
+  if (!course.can_view) {
+    return <p className="muted">{user.role === "ta"
+      ? "You're not a TA on this course. Ask its teacher to add you."
+      : "You don't have access to this course."}</p>;
+  }
 
   // Only the course's own teacher or an admin assigns TAs.
-  const ownsCourse = user.role === "admin" || course.teacher_id === user.id;
+  const ownsCourse = user.role === "admin" || (user.role === "teacher" && course.teacher_id === user.id);
 
   return (
     <>
       <span className="tag">{course.code}</span>
       <h1>{course.title}</h1>
       <p className="muted">{course.description}</p>
+      {ownsCourse && <JoinCode course={course} onChanged={load} />}
       {ownsCourse && <Staff courseId={id} />}
-      {course.can_manage && <NewAssignment courseId={id} onCreated={load} />}
+      {course.can_manage && <AssignmentForm courseId={id} onSaved={load} />}
       <h2>Assignments</h2>
       {assignments.length === 0 && <p className="muted">No assignments yet.</p>}
       {assignments.map((a) => (
-        <Assignment key={a.id} a={a} manage={course.can_manage} />
+        <Assignment key={a.id} a={a} manage={course.can_manage} courseId={id} onChanged={load} />
       ))}
     </>
+  );
+}
+
+function JoinCode({ course, onChanged }) {
+  const [error, setError] = useState("");
+  const regenerate = async () => {
+    if (!window.confirm("Make a new join code? The old one stops working (students already in stay in).")) return;
+    try { await api.newJoinCode(course.id); onChanged(); } catch (e) { setError(e.message); }
+  };
+  return (
+    <div className="card row">
+      <span>Students join with code <code className="joincode">{course.join_code}</code></span>
+      <button className="secondary" onClick={regenerate}>New code</button>
+      {error && <span className="error">{error}</span>}
+    </div>
   );
 }
 
@@ -92,10 +112,20 @@ function Staff({ courseId }) {
   );
 }
 
-function NewAssignment({ courseId, onCreated }) {
-  const empty = { title: "", description: "", due_at: "", max_points: 100,
+// <input type="datetime-local"> wants local time without a zone, e.g. 2026-12-01T23:59
+function toLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function AssignmentForm({ courseId, onSaved, existing, onCancel }) {
+  const empty = { title: "", description: "", due_at: "", max_points: 100, max_attempts: 20,
     allow_late: true, late_penalty_percent: 0, kind: "file", starter_code: "", test_code: "" };
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(existing
+    ? { ...empty, ...existing, due_at: toLocalInput(existing.due_at), test_code: existing.test_code || "" }
+    : empty);
   const [error, setError] = useState("");
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
   const submit = async (e) => {
@@ -104,9 +134,14 @@ function NewAssignment({ courseId, onCreated }) {
     try {
       // datetime-local is the teacher's local time; send it as UTC so the deadline is exact.
       const due_at = form.due_at ? new Date(form.due_at).toISOString() : null;
-      await api.createAssignment(courseId, { ...form, due_at });
-      setForm(empty);
-      onCreated();
+      const fields = { title: form.title, description: form.description, due_at,
+        max_points: Number(form.max_points), max_attempts: Number(form.max_attempts),
+        allow_late: form.allow_late, late_penalty_percent: Number(form.late_penalty_percent),
+        kind: form.kind, starter_code: form.starter_code, test_code: form.test_code };
+      if (existing) await api.updateAssignment(existing.id, fields);
+      else await api.createAssignment(courseId, fields);
+      if (!existing) setForm(empty);
+      onSaved();
     } catch (err) { setError(err.message); }
   };
   return (
@@ -121,6 +156,8 @@ function NewAssignment({ courseId, onCreated }) {
       <label className="small">Due <input type="datetime-local" value={form.due_at} onChange={set("due_at")} /></label>
       <label className="small">Points <input type="number" min="1" value={form.max_points}
         onChange={set("max_points")} style={{ width: 80 }} /></label>
+      <label className="small">Attempts <input type="number" min="1" max="1000" value={form.max_attempts}
+        onChange={set("max_attempts")} style={{ width: 70 }} /></label>
       <label className="small"><input type="checkbox" checked={form.allow_late} onChange={set("allow_late")} /> Accept late work</label>
       {form.allow_late && (
         <label className="small">Late penalty % <input type="number" min="0" max="100"
@@ -142,7 +179,9 @@ function NewAssignment({ courseId, onCreated }) {
         </>
       )}
       <div className="row">
-        <button>Add assignment</button>
+        <button>{existing ? "Save changes" : "Add assignment"}</button>
+        {existing && <button type="button" className="secondary" onClick={onCancel}>Cancel</button>}
+        {existing?.autograded && <span className="muted small">After changing tests, use "Regrade all".</span>}
         {error && <p className="error">{error}</p>}
       </div>
     </form>
@@ -165,7 +204,16 @@ function AutoStatus({ s }) {
   return <div className="auto done">✔ {ag.passed}/{ag.total} tests passed · {ag.points} pts</div>;
 }
 
-function Assignment({ a, manage }) {
+function Assignment({ a, manage, courseId, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return <AssignmentForm courseId={courseId} existing={a} onCancel={() => setEditing(false)}
+      onSaved={() => { setEditing(false); onChanged(); }} />;
+  }
+  return <AssignmentCard a={a} manage={manage} onEdit={() => setEditing(true)} />;
+}
+
+function AssignmentCard({ a, manage, onEdit }) {
   const [subs, setSubs] = useState([]);
   const [file, setFile] = useState(null);
   const [code, setCode] = useState(a.starter_code || "");
@@ -205,6 +253,13 @@ function Assignment({ a, manage }) {
     catch (err) { setMsg(err.message); }
   };
 
+  // Newest first: the first submission seen for each student is the one that counts.
+  const latestIds = new Set();
+  const seen = new Set();
+  for (const sub of subs) {
+    if (!seen.has(sub.student_id)) { seen.add(sub.student_id); latestIds.add(sub.id); }
+  }
+  const outOfAttempts = subs.length >= a.max_attempts;
   const pastDue = a.due_at && new Date(a.due_at) < new Date();
   const closed = pastDue && !a.allow_late;
 
@@ -230,11 +285,16 @@ function Assignment({ a, manage }) {
       <p>{a.description}</p>
 
       {a.autograded && <p className="muted small">🧪 Autograded: your code is tested on the server when you submit.</p>}
-      {manage && a.autograded && (
-        <div className="row"><button className="secondary" onClick={regradeAll}>Regrade all</button></div>
+      {!manage && <p className="muted small">Attempts used: {subs.length} of {a.max_attempts}. Your latest attempt is the one that counts.</p>}
+      {manage && (
+        <div className="row">
+          <button className="secondary" onClick={onEdit}>Edit</button>
+          {a.autograded && <button className="secondary" onClick={regradeAll}>Regrade all</button>}
+        </div>
       )}
 
-      {!manage && a.kind === "code" && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
+      {!manage && outOfAttempts && <p className="muted">You've used all your attempts.</p>}
+      {!manage && !outOfAttempts && a.kind === "code" && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
         <div className="stack">
           <PythonEditor value={code} onChange={setCode} runnable />
           <div className="row"><button onClick={submitCode} disabled={!code.trim()}>
@@ -242,7 +302,7 @@ function Assignment({ a, manage }) {
         </div>
       ))}
 
-      {!manage && a.kind !== "code" && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
+      {!manage && !outOfAttempts && a.kind !== "code" && (closed ? <p className="muted">The deadline has passed. Submissions are closed.</p> : (
         <form className="row" onSubmit={upload}>
           <input type="file" accept=".py,.ipynb,.pdf,.zip,.txt,.md,.png,.jpg"
             onChange={(e) => setFile(e.target.files[0])} />
@@ -258,8 +318,8 @@ function Assignment({ a, manage }) {
           </tr></thead>
           <tbody>
             {subs.map((s) => (
-              <tr key={s.id}>
-                {manage && <td>{s.student}</td>}
+              <tr key={s.id} className={latestIds.has(s.id) ? "" : "older"}>
+                {manage && <td>{s.student}{latestIds.has(s.id) && <span className="badge-latest">latest</span>}</td>}
                 <td><a href={api.fileUrl(s.id)}>{s.original_name}</a>
                   {a.kind === "code" && <> · <button className="link small" onClick={() => setViewing(s)}>view</button></>}</td>
                 <td className="small">{new Date(s.submitted_at).toLocaleString()}
@@ -279,6 +339,8 @@ function Assignment({ a, manage }) {
 }
 
 function SubmissionViewer({ s, manage, onClose, onRegraded }) {
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.showModal(); }, []);
   const [code, setCode] = useState("Loading…");
   const [err, setErr] = useState("");
   useEffect(() => { api.code(s.id).then((r) => setCode(r.code)).catch((e) => setCode(e.message)); }, [s.id]);
@@ -286,7 +348,8 @@ function SubmissionViewer({ s, manage, onClose, onRegraded }) {
     try { await api.regrade(s.id); onRegraded(); onClose(); } catch (e) { setErr(e.message); }
   };
   return (
-    <dialog open aria-label="Submission">
+    <dialog ref={ref} aria-label="Submission" onClose={onClose}
+      onClick={(e) => { if (e.target === ref.current) onClose(); }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h3 style={{ margin: 0 }}>{s.student} · {new Date(s.submitted_at).toLocaleString()}</h3>
         <button className="secondary" onClick={onClose}>Close</button>
@@ -313,7 +376,7 @@ function GradeForm({ s, max, onSaved }) {
   };
   return (
     <form className="row" onSubmit={save}>
-      <input type="number" min="0" max={max} step="0.5" required value={points}
+      <input type="number" min="0" max={max} step="any" required value={points}
         aria-label="Points" onChange={(e) => setPoints(e.target.value)} style={{ width: 70 }} />
       <input placeholder="Feedback" value={feedback} onChange={(e) => setFeedback(e.target.value)} />
       <button>{s.grade ? "Update" : "Save"}</button>
