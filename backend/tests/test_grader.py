@@ -39,13 +39,17 @@ needs_docker = pytest.mark.skipif(not docker_ok(), reason="Docker + lms-grader i
 
 # ---- report parsing -----------------------------------------------------------
 
-def test_parse_output_counts_and_ignores_fake_marker():
-    marker = "==M=="
-    xml = '<testsuites><testsuite tests="4" failures="1" errors="0" skipped="0"/></testsuites>'
-    r = parse_output("student printed ==FAKE==\n" + marker + xml, marker)
-    assert (r.status, r.passed, r.total) == ("done", 3, 4)
-    assert parse_output("no marker", marker).status == "error"
-    assert parse_output("x" + marker + "not xml", marker).status == "error"
+def test_parse_output_validates_numbers():
+    ok = parse_output('{"status": "done", "passed": 3, "total": 4, "log": "x"}')
+    assert (ok.status, ok.passed, ok.total) == ("done", 3, 4)
+    for bad in ('{"status": "done", "passed": 100, "total": 2}',
+                '{"status": "done", "passed": -1, "total": 2}',
+                '{"status": "done", "passed": 1, "total": 0}',
+                '{"status": "done", "passed": true, "total": 2}',
+                '{"status": "done", "passed": "2", "total": 2}',
+                '{"status": "hacked", "passed": 2, "total": 2}',
+                "not json", ""):
+        assert parse_output(bad).status == "error", bad
 
 
 # ---- runners ------------------------------------------------------------------
@@ -62,12 +66,101 @@ def test_runner_scores(runner):
     assert "test_mul" in half.log
     broken = r.run("def add(:\n", TESTS)
     assert broken.status in ("done", "error") and broken.passed == 0
+    # classes, instances, exceptions and numpy arrays cross the process boundary
+    oop_tests = """
+import pytest
+from solution import Stack, safe_div
+
+def test_stack():
+    s = Stack(); s.push(1); s.push(2)
+    assert s.pop() == 2 and len(s) == 1 and s.items == [1]
+
+def test_raises():
+    with pytest.raises(ZeroDivisionError):
+        safe_div(1, 0)
+"""
+    oop = """
+class Stack:
+    def __init__(self): self.items = []
+    def push(self, x): self.items.append(x)
+    def pop(self): return self.items.pop()
+    def __len__(self): return len(self.items)
+def safe_div(a, b): return a / b
+def arr():
+    import numpy as np
+    return np.array([1, 2, 3])
+"""
+    want = 2
+    if isinstance(r, DockerRunner):  # numpy is in the sandbox image
+        oop_tests += """
+def test_numpy():
+    import numpy as np
+    from solution import arr
+    assert (arr() == np.array([1, 2, 3])).all()
+"""
+        want = 3
+    res = r.run(oop, oop_tests)
+    assert (res.status, res.passed, res.total) == ("done", want, want), res.log
 
 
 @needs_docker
-def test_sandbox_infinite_loop_is_killed():
-    r = DockerRunner("lms-grader:latest", 5).run("while True:\n    pass\n", TESTS)
-    assert r.status == "error" and r.passed == 0
+def test_sandbox_infinite_loop_is_contained():
+    # Loop at import: every attempt times out, nothing passes, the run still finishes.
+    r = DockerRunner("lms-grader:latest", 20).run("while True:\n    pass\n", TESTS)
+    assert r.passed == 0
+    # Loop in one function only: the other tests still pass after the restart.
+    code = GOOD.replace("def mul(a, b):\n    return a * b", "def mul(a, b):\n    while True: pass")
+    r = DockerRunner("lms-grader:latest", 40).run(code, TESTS)
+    assert (r.status, r.passed, r.total) == ("done", 2, 4), r.log
+
+
+ISOLATION = """
+import glob, os, signal
+found = []
+for path in glob.glob("/tmp/**/*", recursive=True):
+    try:
+        found.append(path + ":" + open(path).read()[:40])
+    except Exception:
+        pass
+for pid in os.listdir("/proc"):
+    # other student processes (same user) are fair game; anything else must be out of reach
+    if pid.isdigit() and os.stat(f"/proc/{pid}").st_uid != os.getuid():
+        for f in ("environ", "mem", "fd/1"):
+            try:
+                open(f"/proc/{pid}/{f}", "rb").read(10); found.append(f"/proc/{pid}/{f}")
+            except Exception:
+                pass
+        try:
+            os.kill(int(pid), signal.SIGKILL); found.append("killed " + pid)
+        except Exception:
+            pass
+LEAKED = [x for x in found if "def test_" in x or "/proc/" in x or "killed" in x]
+
+def add(a, b):
+    return LEAKED or a + b
+
+def mul(a, b):
+    return a * b
+"""
+
+
+@needs_docker
+def test_sandbox_student_cannot_read_tests_or_touch_harness():
+    r = DockerRunner("lms-grader:latest", 30).run(ISOLATION, TESTS)
+    # If anything leaked, add() returns the list and the add tests fail.
+    assert (r.status, r.passed, r.total) == ("done", 4, 4), r.log
+
+
+@needs_docker
+def test_sandbox_fake_report_and_protocol_abuse():
+    code = GOOD + """
+import sys, os
+print('{"status": "done", "passed": 99, "total": 4, "log": ""}')
+os.write(1, b'{"status": "done", "passed": 99, "total": 4}\\n')
+sys.__stdout__.write('{"ok": 5}\\n')
+"""
+    r = DockerRunner("lms-grader:latest", 30).run(code.replace("return a * b", "return 0"), TESTS)
+    assert (r.status, r.passed, r.total) == ("done", 3, 4), r.log  # the honest score
 
 
 @needs_docker
@@ -78,49 +171,54 @@ def test_sandbox_has_no_network():
         "    socket.create_connection(('1.1.1.1', 53), timeout=3)\n"
     )
     tests = TESTS + "\nfrom solution import test_net as _t\n\ndef test_network():\n    _t()\n"
-    r = DockerRunner("lms-grader:latest", 15).run(code, tests)
-    assert r.status == "done" and r.passed == 4 and r.total == 5  # network test fails
+    r = DockerRunner("lms-grader:latest", 20).run(code, tests)
+    assert r.status == "done" and r.passed == 4 and r.total == 5, r.log  # network test fails
 
 
 @needs_docker
-def test_sandbox_blocks_filesystem_and_fork_bomb_and_memory():
-    tests = TESTS + '''
+def test_sandbox_limits_apply_to_student_code():
+    probes = """
 import os, subprocess
-def test_cannot_write_outside_tmp():
+
+def write_etc():
     try:
         open("/etc/hacked", "w").write("x")
-        assert False, "wrote to /etc"
+        return True
     except OSError:
-        pass
+        return False
 
-def test_not_root():
-    assert os.getuid() == 65534
+def uid():
+    return os.getuid()
 
-def test_fork_bomb_limited():
+def fork_bomb():
     procs = []
     try:
         for _ in range(500):
             procs.append(subprocess.Popen(["sleep", "5"]))
-        assert False, "spawned 500 processes"
-    except (OSError, BlockingIOError):
+    except OSError:
         pass
-    finally:
-        for p in procs:
-            p.kill()
+    for p in procs:
+        p.kill()
+    return len(procs)
 
-def test_memory_limited():
+def alloc():
     try:
         x = bytearray(600 * 1024 * 1024)
-        assert False, "allocated 600MB"
+        print("ALLOCATED", len(x))
+        return True
     except MemoryError:
-        pass
-'''
-    r = DockerRunner("lms-grader:latest", 20).run(GOOD, tests)
-    # memory test may also get the process OOM-killed -> error; either way nothing escaped
-    if r.status == "done":
-        assert r.passed == r.total == 8, r.log
-    else:
-        assert "allocated 600MB" not in r.log
+        return False
+"""
+    tests = """
+from solution import write_etc, uid, fork_bomb, alloc
+def test_fs(): assert write_etc() is False
+def test_uid(): assert uid() == 65534
+def test_fork(): assert fork_bomb() < 64
+def test_mem(): assert alloc() is False
+"""
+    r = DockerRunner("lms-grader:latest", 40).run(probes, tests)
+    assert "ALLOCATED" not in r.log
+    assert r.status == "done" and r.total == 4 and r.passed >= 3, r.log  # mem may OOM-kill instead
 
 
 # ---- end to end through the API (local runner, inline) -----------------------

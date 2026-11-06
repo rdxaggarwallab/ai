@@ -1,35 +1,41 @@
-"""Autograder: runs a teacher's pytest tests against a student's solution.py.
+"""Autograder: runs a teacher's hidden pytest tests against a student's solution.py.
 
-Student code is untrusted. In real use it only runs inside the Docker sandbox
-(DockerRunner): no network, read-only filesystem, memory/CPU/process limits,
-non-root user, and a hard timeout. LocalUnsafeRunner exists only for tests and
-development on a machine without Docker; production refuses to use it.
+The work happens in ``grader/harness.py``. The hidden tests run in a trusted process, and
+the student's code runs in a *separate* process under another user account, reached
+only through a pipe that carries plain data. So student code cannot read the tests,
+tamper with pytest, or write the score report (see the harness docstring).
 
-Known limit: tests and student code share one Python process, so a determined
-student could tamper with pytest itself. Hidden tests stop casual cheating;
-teachers should still look at the code (see docs/PLAN.md, Phase 3 similarity check).
+DockerRunner: the harness runs inside a throwaway container: no network, read-only
+filesystem, memory/CPU/process limits, all capabilities dropped except the two needed to
+switch users, and a hard timeout. This is the only mode for real use.
+
+LocalUnsafeRunner: runs the same harness directly on this machine *without* the
+container or the user switch. Development and tests only; production refuses it.
 """
 import io
+import json
 import os
 import re
-import secrets
-import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import timedelta
 
 import click
 from flask import current_app
+from sqlalchemy.exc import SQLAlchemyError
 
 from .extensions import db
 from .models import Submission, now
 
-MAX_LOG = 20_000  # characters of pytest output kept per submission
+MAX_LOG = 20_000  # characters of grader output kept per submission
+MAX_TESTS = 1000
+HARNESS_PATH = os.environ.get(
+    "GRADER_HARNESS",
+    os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "grader", "harness.py")),
+)
 
 
 @dataclass
@@ -40,119 +46,105 @@ class Result:
     log: str = ""
 
 
-def _script(marker: str, timeout: int) -> str:
-    # Runs inside the sandbox. JUnit XML is printed after a random marker so the
-    # student's own prints can't be confused with it.
-    return (
-        "cd /tmp/w && "
-        f"timeout -s KILL {timeout} python -m pytest -q -p no:cacheprovider "
-        "--junitxml=/tmp/junit.xml test_solution.py > /tmp/out.txt 2>&1; "
-        "cat /tmp/out.txt | head -c 20000; "
-        f"echo; echo '{marker}'; cat /tmp/junit.xml 2>/dev/null"
-    )
+def _tar(solution: str, tests: str) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for name, text in (("solution.py", solution), ("test_solution.py", tests)):
+            data = text.encode("utf-8")
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o444
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
 
 
-def _files(solution: str, tests: str) -> dict[str, str]:
-    return {"solution.py": solution, "test_solution.py": tests}
+def parse_output(raw: str) -> Result:
+    """Parse the harness report: one JSON object on its last line.
 
-
-def parse_output(raw: str, marker: str) -> Result:
-    if marker not in raw:
-        return Result("error", log=raw[:MAX_LOG] or "Grader produced no output")
-    log, _, xml = raw.rpartition(marker)
-    log = log.strip()[:MAX_LOG]
+    Only the harness writes to this stream (student code has no access to it), but the
+    numbers are still checked, so a bug can never produce an impossible score.
+    """
+    lines = [ln for ln in raw.strip().splitlines() if ln.strip()]
+    if not lines:
+        return Result("error", log="Grader produced no output (time limit or crash).")
     try:
-        root = ET.fromstring(xml.strip())
-    except ET.ParseError:
-        # pytest never wrote a report: usually the time limit was hit.
-        return Result("error", log=(log + "\n\nNo test report: time limit hit or the run crashed.").strip())
-    suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
-    total = sum(int(s.get("tests", 0)) for s in suites)
-    bad = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
-    skipped = sum(int(s.get("skipped", 0)) for s in suites)
-    if total == 0:
-        return Result("error", log=(log + "\n\nNo tests were collected.").strip())
-    return Result("done", passed=total - bad - skipped, total=total, log=log)
+        r = json.loads(lines[-1])
+        status, passed, total = r["status"], r["passed"], r["total"]
+        log = str(r.get("log", ""))[-MAX_LOG:]
+    except (ValueError, KeyError, TypeError):
+        return Result("error", log=raw[-MAX_LOG:])
+    if status not in ("done", "error"):
+        return Result("error", log=log)
+    if status == "error":
+        return Result("error", log=log)
+    if (not isinstance(passed, int) or not isinstance(total, int) or isinstance(passed, bool)
+            or isinstance(total, bool) or not 0 < total <= MAX_TESTS or not 0 <= passed <= total):
+        return Result("error", log=f"Grader returned an impossible score ({passed!r}/{total!r}).\n{log}")
+    return Result("done", passed=passed, total=total, log=log)
 
 
 class DockerRunner:
     def __init__(self, image: str, timeout: int):
         self.image, self.timeout = image, timeout
 
-    def run(self, solution: str, tests: str) -> Result:
-        marker = "==LMS-REPORT-" + secrets.token_hex(16) + "=="
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tar:
-            for name, text in _files(solution, tests).items():
-                data = text.encode()
-                info = tarfile.TarInfo(name)
-                info.size, info.mode = len(data), 0o444
-                tar.addfile(info, io.BytesIO(data))
-        cmd = [
+    def command(self):
+        return [
             "docker", "run", "--rm", "-i",
             "--network", "none",
             "--read-only",
-            "--tmpfs", "/tmp:rw,size=64m,exec",
-            "--memory", "256m", "--memory-swap", "256m",
+            "--tmpfs", "/tmp:rw,size=64m,exec,mode=1777",
+            "--memory", "512m", "--memory-swap", "512m",
             "--cpus", "1",
             "--pids-limit", "64",
-            "--cap-drop", "ALL",
+            # Starts as root with no powers except switching user; the harness drops to
+            # uid 65533 and runs student code as uid 65534 straight away.
+            "--user", "0:0",
+            "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID",
             "--security-opt", "no-new-privileges",
-            "--user", "65534:65534",
             "--env", "HOME=/tmp",
             self.image,
-            "sh", "-c", "mkdir /tmp/w && tar -x -C /tmp/w && " + _script(marker, self.timeout),
+            "timeout", "-s", "KILL", str(self.timeout),
+            "python", "-I", "/opt/grader/harness.py", "--sandbox", "--timeout", str(max(1, self.timeout - 3)),
         ]
+
+    def run(self, solution: str, tests: str) -> Result:
         try:
-            p = subprocess.run(cmd, input=buf.getvalue(), capture_output=True,
+            p = subprocess.run(self.command(), input=_tar(solution, tests), capture_output=True,
                                timeout=self.timeout + 30)
         except subprocess.TimeoutExpired:
             return Result("error", log="Sandbox did not finish in time.")
         except FileNotFoundError:
             return Result("error", log="Docker is not installed on the grading server.")
-        out = p.stdout.decode(errors="replace")
-        if p.returncode != 0 and marker not in out:
-            return Result("error", log=(out + p.stderr.decode(errors="replace"))[:MAX_LOG])
-        return parse_output(out, marker)
+        out = p.stdout.decode("utf-8", errors="replace")
+        if p.returncode != 0 and not out.strip():
+            err = p.stderr.decode("utf-8", errors="replace")
+            if p.returncode in (137, -9):
+                err = f"Time limit of {self.timeout}s exceeded.\n" + err
+            return Result("error", log=err[-MAX_LOG:])
+        return parse_output(out)
 
 
 class LocalUnsafeRunner:
-    """DEVELOPMENT ONLY. Runs student code directly on this machine, with basic limits."""
+    """DEVELOPMENT ONLY. Runs the harness on this machine with no container and no user switch."""
 
     def __init__(self, timeout: int):
         self.timeout = timeout
 
     def run(self, solution: str, tests: str) -> Result:
-        work = tempfile.mkdtemp(prefix="lms-grade-")
+        if not os.path.exists(HARNESS_PATH):
+            return Result("error", log=f"Grader harness not found at {HARNESS_PATH}")
+        env = {"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8"}
+        if os.name == "nt":
+            env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
         try:
-            for name, text in _files(solution, tests).items():
-                with open(os.path.join(work, name), "w") as f:
-                    f.write(text)
-            junit = os.path.join(work, "junit.xml")
-
-            def limits():  # Unix only; Windows has no rlimits (only the timeout applies)
-                import resource
-
-                resource.setrlimit(resource.RLIMIT_CPU, (self.timeout, self.timeout))
-                resource.setrlimit(resource.RLIMIT_AS, (1024 * 2**20, 1024 * 2**20))
-
-            try:
-                p = subprocess.run(
-                    [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                     f"--junitxml={junit}", "test_solution.py"],
-                    cwd=work, capture_output=True, timeout=self.timeout,
-                    preexec_fn=None if os.name == "nt" else limits,
-                    env={**({"SYSTEMROOT": os.environ.get("SYSTEMROOT", "")} if os.name == "nt" else {}),
-                         "PATH": os.environ.get("PATH", ""), "HOME": work},
-                )
-                log = (p.stdout + p.stderr).decode(errors="replace")
-            except subprocess.TimeoutExpired:
-                return Result("error", log=f"Time limit of {self.timeout}s exceeded.")
-            marker = "==MARK=="
-            xml = open(junit).read() if os.path.exists(junit) else ""
-            return parse_output(log + marker + xml, marker)
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
+            p = subprocess.run(
+                [sys.executable, "-I", HARNESS_PATH, "--local", "--timeout", str(max(1, self.timeout - 3))],
+                input=_tar(solution, tests), capture_output=True, timeout=self.timeout + 10, env=env)
+        except subprocess.TimeoutExpired:
+            return Result("error", log=f"Time limit of {self.timeout}s exceeded.")
+        out = p.stdout.decode("utf-8", errors="replace")
+        if not out.strip():
+            return Result("error", log=p.stderr.decode("utf-8", errors="replace")[-MAX_LOG:])
+        return parse_output(out)
 
 
 def get_runner():
@@ -171,19 +163,28 @@ def read_solution(sub: Submission) -> str:
 
 
 def grade_submission(sub: Submission, runner=None) -> Submission:
-    """Run the tests for one submission and store the result."""
+    """Run the tests for one submission and store the result.
+
+    If the submission was re-queued while the tests ran (a teacher pressed Regrade after
+    fixing the tests), the now-outdated result is thrown away and the queued run stands.
+    """
     a = sub.assignment
+    started_status, started_at = sub.grading_status, sub.graded_started_at
     runner = runner or get_runner()
     if runner is None:
-        sub.grading_status, sub.grading_log = "error", "Autograder is turned off on this server."
+        r = Result("error", log="Autograder is turned off on this server.")
     else:
         try:
             r = runner.run(read_solution(sub), a.test_code)
         except Exception as e:  # never let one bad submission kill the worker
             r = Result("error", log=f"Grader crashed: {e!r}")
-        sub.grading_status, sub.grading_log = r.status, r.log
-        sub.tests_passed, sub.tests_total = (r.passed, r.total) if r.status == "done" else (None, None)
-        sub.auto_points = round(a.max_points * r.passed / r.total, 2) if r.status == "done" else None
+    db.session.refresh(sub)
+    if sub.grading_status != started_status or sub.graded_started_at != started_at:
+        return sub  # re-queued meanwhile: leave it for the next run
+    sub.grading_status, sub.grading_log = r.status, r.log
+    done = r.status == "done"
+    sub.tests_passed, sub.tests_total = (r.passed, r.total) if done else (None, None)
+    sub.auto_points = round(a.max_points * r.passed / r.total, 2) if done else None
     db.session.commit()
     return sub
 
@@ -215,12 +216,23 @@ def register_cli(app):
         click.echo(f"Grade worker started (mode: {mode})")
         if mode == "local-unsafe":
             click.echo("WARNING: local-unsafe runs student code WITHOUT a sandbox. Development only.")
+        failures = 0
         while True:
-            sub = claim_next()
-            if sub:
-                grade_submission(sub)
-                click.echo(f"Graded submission {sub.id}: {sub.grading_status} "
-                           f"{sub.tests_passed}/{sub.tests_total}")
+            try:
+                sub = claim_next()
+                if sub:
+                    grade_submission(sub)
+                    click.echo(f"Graded submission {sub.id}: {sub.grading_status} "
+                               f"{sub.tests_passed}/{sub.tests_total}")
+                    failures = 0
+                    continue
+            except SQLAlchemyError as e:
+                # Database restarted or connection dropped: keep the worker alive and retry.
+                db.session.rollback()
+                db.session.remove()
+                failures += 1
+                click.echo(f"Database error ({e.__class__.__name__}); retrying", err=True)
+                time.sleep(min(30, 2 ** min(failures, 5)))
                 continue
             if once:
                 return

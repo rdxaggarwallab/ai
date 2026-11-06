@@ -4,6 +4,8 @@
 ARG BASE=python:3.12-slim
 FROM ${BASE}
 RUN pip install --no-cache-dir pytest==8.3.4 numpy==2.1.3
-# Runs as "nobody" (uid 65534); the container is started read-only with no network.
-USER 65534:65534
+# The harness runs the hidden tests and talks to the student's code in a separate process
+# under a different user. It starts as root only to switch users, then drops to uid 65533.
+COPY harness.py /opt/grader/harness.py
+RUN chmod 0444 /opt/grader/harness.py
 WORKDIR /tmp
