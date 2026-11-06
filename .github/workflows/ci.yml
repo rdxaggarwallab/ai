@@ -35,6 +35,12 @@ jobs:
         run: docker build -t lms-grader:latest ../grader
       - name: Unit tests
         run: python -m pytest -q -rs
+      - name: Adversarial tests from the 2026-11-06 test report
+        run: python -m pytest -q -rs ../tests_e2e -o pythonpath=../tests_e2e -p no:cacheprovider
+      - name: Adversarial API tests on PostgreSQL
+        env:
+          LMS_TEST_DB: postgresql://lms:lms@localhost:5432/lms
+        run: python -m pytest -q ../tests_e2e/test_adversarial.py -o pythonpath=../tests_e2e -p no:cacheprovider
       - name: Migrations apply cleanly to PostgreSQL
         run: flask db upgrade
       - name: Models and migrations are in sync
