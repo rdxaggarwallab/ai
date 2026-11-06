@@ -1,5 +1,6 @@
-# Starts everything:  docker compose up --build
+# DEVELOPMENT setup. Starts everything:  docker compose up --build
 # Then open http://localhost:3000
+# For a real server use docker-compose.prod.yml (see docs/DEPLOY.md).
 x-api-env: &api-env
   DATABASE_URL: postgresql://lms:lms@db:5432/lms
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-key-change-me-in-production-0000}
@@ -53,7 +54,7 @@ services:
       grader-image: { condition: service_completed_successfully }
 
   web:
-    build: ./frontend
+    build: { context: ./frontend, target: dev }
     environment:
       API_URL: http://api:5000
     ports: ["3000:3000"]

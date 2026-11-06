@@ -64,8 +64,11 @@ docker compose exec api flask create-admin you@institute.edu "Your Name"   # wit
 It asks for a password. If the email already has an account, that account is promoted to admin.
 
 ## Try it
-1. Register as a **Teacher**. Create a course, open it, and add an assignment.
-2. In a private or incognito window, register as a **Student**. Enroll, open the course and upload a `.py` file.
+1. Create the admin (above). Register a second account and, as admin, open **Users** and make it a
+   **teacher** (the sign-up page is for students only). Log in as the teacher, create a course, open it,
+   and add an assignment. Note the course's **join code**.
+2. In a private or incognito window, register as a **Student**, type the join code under **Join course**,
+   open the course and upload a `.py` file.
 3. Back as the teacher, refresh the page and enter a grade and feedback.
 4. As the student, open **My grades**.
 5. As admin, open **Users**, register a third person and change their role to **ta**. As the teacher,
@@ -78,8 +81,9 @@ It asks for a password. If the email already has an account, that account is pro
    grade shows "x/y tests passed". The teacher sees the score pre-filled, and **view** shows the code and test output.
 
 ## What works (MVP)
-- ✅ Register and login (student or teacher), with the token in an httpOnly cookie and CSRF protection
-- ✅ Courses: create (teacher), list, enroll (student)
+- ✅ Sign up as a student; admins make teachers and TAs. The token is in an httpOnly cookie with CSRF protection
+- ✅ Logout and admin password reset end all of that user's sessions
+- ✅ Courses: create (teacher); students join with the course's join code and only see their own courses
 - ✅ Assignments: create with due date and points
 - ✅ File submission (.py .ipynb .pdf .zip .txt .md .png .jpg, max 20 MB)
 - ✅ Grading with feedback, and a student grades page
@@ -87,11 +91,15 @@ It asks for a password. If the email already has an account, that account is pro
 - ✅ Admin page: search users, change roles, reset passwords
 - ✅ TAs assigned per course
 - ✅ Due dates in the right timezone, late badge, late penalty %, or late work blocked
-- ✅ Login limited to 10 tries a minute (register: 5)
+- ✅ Login limited to 10 tries a minute per person (per IP + email); submissions 10 a minute per student
+- ✅ Attempt limit per assignment (default 20); the latest attempt counts
+- ✅ Edit assignments after creating them
 
 ## What works (Phase 2: coding)
-- ✅ Python editor in the browser with Run and Stop (an infinite loop can't freeze the page)
-- ✅ Hidden pytest tests, run on the server in a locked-down Docker sandbox
+- ✅ Python editor in the browser with Run and Stop (an infinite loop or a print() loop can't freeze the page).
+  The code runs with no network access, so it's safe for teachers to press Run on a student's code
+- ✅ Hidden pytest tests, run on the server in a locked-down Docker sandbox. The student's code runs in a
+  separate process under another user, so it can't read the tests or fake its score
 - ✅ Automatic score (tests passed / total × points), pre-filled into the teacher's grade
 - ✅ Teachers and TAs view the code and full test output; regrade one or all after fixing tests
 - ✅ Students see "x/y tests passed" but never the hidden tests or their output

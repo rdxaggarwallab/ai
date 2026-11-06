@@ -45,14 +45,16 @@ Create the admin:
 Use separate browser profiles or incognito windows per role. Mark each step ✅ / ❌ / ⚠️.
 
 **Accounts and roles**
-1. Register a teacher (`t@test.edu`) and a student (`s@test.edu`), password `password123`.
+1. Register `t@test.edu` and `s@test.edu` (password `password123`). The sign-up page offers no role choice.
+   As admin, make `t@test.edu` a **teacher** on the Users page.
 2. Register `ta@test.edu`. As admin, open **Users** and change its role to `ta`.
 3. As admin, reset the student's password, then log in with the new one.
 4. Wrong password 11 times in a minute: the 11th must say "Too many attempts".
 5. Admin can't remove their own admin role (the dropdown is disabled).
 
 **Courses and TAs**
-6. Teacher creates course `AI101`. The student enrolls. A second student who is *not* enrolled can't open it.
+6. Teacher creates course `AI101` and reads its join code. The student joins with the code (a wrong code fails).
+   A second student who hasn't joined doesn't see the course and can't open its URL.
 7. Teacher adds `ta@test.edu` under **Teaching assistants**. The TA can open and grade AI101.
 8. Teacher creates a second course. The TA must **not** be able to manage it.
 

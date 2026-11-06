@@ -1,0 +1,68 @@
+# PRODUCTION setup for a real server (pilot). See docs/DEPLOY.md.
+#   cp .env.example .env    # then edit .env
+#   docker compose -f docker-compose.prod.yml up -d --build
+# Only the web server (nginx) is reachable from outside. The API, database and worker are internal.
+x-api-env: &api-env
+  LMS_ENV: production   # refuses to start without a real JWT_SECRET_KEY
+  DATABASE_URL: postgresql://lms:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/lms
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env (32+ random characters)}
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}  # needs HTTPS; set false only for a test on plain http
+  TRUSTED_PROXIES: "1"
+  UPLOAD_DIR: /data/uploads
+  AUTOGRADER: docker
+  GRADER_IMAGE: lms-grader:latest
+  GRADER_TIMEOUT: "30"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lms
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      POSTGRES_DB: lms
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms"]
+      interval: 5s
+      retries: 20
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment: *api-env
+    volumes: [uploads:/data/uploads]
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
+      interval: 5s
+      retries: 30
+
+  grader-image:
+    build: ./grader
+    image: lms-grader:latest
+    command: ["true"]
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["flask", "grade-worker"]
+    environment: *api-env
+    volumes:
+      - uploads:/data/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      api: { condition: service_healthy }
+      grader-image: { condition: service_completed_successfully }
+
+  web:
+    build: { context: ./frontend, target: prod }
+    restart: unless-stopped
+    ports: ["${WEB_PORT:-80}:80"]
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  dbdata:
+  uploads:

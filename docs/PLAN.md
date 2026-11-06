@@ -32,15 +32,17 @@ You (review, testing, deployment, decisions) and Claude (code, tests, docs).
 - [x] Due dates stored in UTC; late submissions marked, optional late penalty %, or late work blocked
 - [x] Manual grading with feedback, and a grades page
 - [x] GitHub Actions: backend tests, migration check on PostgreSQL, frontend build
+- [x] Production setup: `docker-compose.prod.yml` (nginx, production mode, restart policies), `docs/DEPLOY.md`
+- [x] Fixes from the 2026-11-06 test report (3 critical, 5 high, 9 medium, 10 low)
 - [ ] Deploy and pilot with a few users
-- [ ] Password reset by email (admins reset passwords by hand for now)
+- [ ] Password reset by email (admins reset passwords by hand for now; resets end old sessions)
 
 ### Phase 2: Coding (3–4 weeks)
 - [x] Python editor in the browser (CodeMirror + Pyodide in a Web Worker): Run, Stop, 15s limit; works offline for core Python
 - [x] Server-side autograder: hidden pytest tests in a Docker sandbox (no network, read-only, 256MB, 1 CPU, 64 processes, non-root, time limit); `flask grade-worker`; regrade one or all
 - [ ] Tests students can see (public tests they run before submitting)
 - [ ] Jupyter notebook (.ipynb) assignments
-- [ ] Submission history, resubmission limits (late rules done in MVP)
+- [x] Submission history, attempt limits (late rules done in MVP)
 - [~] Autograder score pre-fills the teacher's grade (full rubrics still to do)
 
 ### Phase 3: Compute (4–6 weeks)
